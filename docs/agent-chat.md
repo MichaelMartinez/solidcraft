@@ -8,7 +8,8 @@ coding agent runs on your computer under **your own account** with that agent: S
 doesn't sell or proxy a model and needs no key for it. An endpoint's key, if it needs one, goes
 into your system keychain, never into SolidCraft's settings.
 
-Desktop app only.
+Desktop app only. When to use this panel rather than a script or an agent running outside the
+app: [which surface, when](interaction.md).
 
 ## Turning it on and off
 
