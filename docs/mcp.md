@@ -5,6 +5,9 @@ SolidCraft speaks the [Model Context Protocol](https://modelcontextprotocol.io) 
 An agent models exactly like a person does: every tool runs engine commands, the same ones the
 toolbar, palette, scripts and control channel use, and never opens a dialog.
 
+Which surface to reach for — this server, the Assistant panel, or a script — and what each one
+can and cannot do, is [which surface, when](interaction.md).
+
 Persistent headless and bridged sessions expose asynchronous product images through the
 ordinary `execute` tool: `render.preflight`, `render.start`, `render.status`,
 `render.cancel` and `render.export`. Keep the complete returned job ID; image bytes remain
