@@ -1634,11 +1634,12 @@ fn skills_name_only_real_tools_and_commands() {
 }
 
 /// Every tool the server instructions name (a bare `snake_case` word in backticks) is a real tool.
+///
+/// The compiled default is checked, not what `initialize` sends: a user's own
+/// `<data>/instructions/mcp.md` is their text and may name tools this release does not have.
 #[test]
 fn instructions_name_only_real_tools() {
-    let mut s = server();
-    let init = call(&mut s, 1, "initialize", json!({"protocolVersion": PROTOCOL_VERSION, "capabilities": {}}));
-    let text = init["result"]["instructions"].as_str().unwrap().to_owned();
+    let text = solidcraft_engine::guidance::default_instructions().to_owned();
     let tools: Vec<String> = tool_definitions().iter().map(|t| t["name"].as_str().unwrap().to_owned()).collect();
     let named: Vec<&str> =
         text.split('`').skip(1).step_by(2).filter(|w| !w.is_empty() && w.chars().all(|c| c.is_ascii_lowercase() || c == '_')).collect();

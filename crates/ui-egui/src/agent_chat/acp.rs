@@ -212,12 +212,13 @@ pub fn wsl_path(path: &std::path::Path) -> std::path::PathBuf {
 }
 
 /// What every session is told about where it is. Agents that don't read `_meta` ignore it.
-pub const SYSTEM_NOTE: &str = "You are running inside SolidCraft, a parametric 3D CAD application, as the user's assistant. \
-The open design is reachable through the `solidcraft-app` MCP server: use its tools (list_commands, batch, execute, inspect_design, \
-measure, screenshot, set_parameter, undo) to read and change the design the user is looking at, and verify with measure or \
-inspect_design. Prefer one `batch` over many small calls. Saving, opening or exporting files waits for the user's approval in \
-the chat, and each message allows a limited number of changes. Don't use shell or file tools: work through the SolidCraft tools. \
-Keep answers short.";
+///
+/// The text is the user's `assistant.md` when `<data dir>/instructions/` has a usable one, and
+/// `solidcraft_engine::guidance`'s compiled default otherwise. An ACP session is told once, at
+/// `session/new`, so a changed file takes effect from the next session.
+pub fn system_note() -> String {
+    solidcraft_engine::guidance::assistant_note()
+}
 
 /// The Claude Code adapter's own tools that reach the computer rather than the design: turned off
 /// for the session (`_meta.claudeCode.options.disallowedTools`), so it works through SolidCraft's.
@@ -230,7 +231,7 @@ pub fn session_new_params(cwd: &std::path::Path, bridge: Option<&McpBridge>) -> 
         "cwd": cwd.to_string_lossy(),
         "mcpServers": servers,
         "_meta": {
-            "systemPrompt": {"append": SYSTEM_NOTE},
+            "systemPrompt": {"append": system_note()},
             // Hosts may opt a session out of "bypass permissions" (the Claude adapter reads it):
             // every tool call the agent asks about reaches the panel.
             // Its own shell and file tools are off: the agent works through SolidCraft's tools.
@@ -667,8 +668,9 @@ mod tests {
     #[test]
     fn the_bridge_has_a_name_of_its_own_and_the_note_uses_it() {
         assert_ne!(BRIDGE_NAME, "solidcraft");
-        assert!(SYSTEM_NOTE.contains(&format!("`{BRIDGE_NAME}` MCP server")), "{SYSTEM_NOTE}");
-        assert!(!SYSTEM_NOTE.contains("`solidcraft` MCP server"));
+        let note = system_note();
+        assert!(note.contains(&format!("`{BRIDGE_NAME}` MCP server")), "{note}");
+        assert!(!note.contains("`solidcraft` MCP server"));
         // The panel still recognises the bridge's tools as SolidCraft's (agents name them after
         // their server, e.g. `mcp__solidcraft-app__batch`).
         assert!(BRIDGE_NAME.contains("solidcraft"));

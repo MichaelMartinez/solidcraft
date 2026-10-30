@@ -6,6 +6,8 @@ use serde_json::{Value, json};
 /// Longest accepted request line, shared with the control server.
 use solidcraft_engine::MAX_LINE;
 
+use solidcraft_engine::guidance;
+
 use solidcraft_engine::io::vfs::{self, PathScope};
 
 use crate::backend::Backend;
@@ -24,18 +26,6 @@ const RESOURCE_NOT_FOUND: i64 = -32002;
 
 /// Most messages in one JSON-RPC batch.
 const MAX_BATCH: usize = 1000;
-
-const INSTRUCTIONS: &str = "SolidCraft is an independent parametric 3D CAD app, and these tools drive it: when its window is \
-open the user watches the model appear, otherwise a headless session builds it. When asked to design or build a part \
-(a bracket, an enclosure, a gear) do it with these tools straight away; nothing needs explaining first. Units are millimetres \
-and degrees in expressions (internally radians), Z is up. Model like this: `sketch.create {plane: XY}`, draw \
-(`sketch.rectangle.two_point {p0, p1}`, `sketch.circle.center {center, radius}`, `sketch.line {points, closed}`), constrain \
-and dimension (`sketch.dimension {entities, value}`; values may name parameters), `sketch.finish`, then features \
-(`solid.extrude {distance, operation?: new|join|cut|intersect}`, `solid.revolve`, `solid.fillet {edges: [[x,y,z] point on \
-edge], radius}`, `solid.chamfer`, patterns, mirror, primitives). Use `batch` for several steps at once, \
-`list_commands` for ids and parameter docs, `describe_command` for a command's schemas, `inspect_design` / `measure` to verify, \
-`body_topology` to find edge points, `set_parameter` to drive the design and `screenshot` to look at it. A call whose error \
-starts `still running:` was not cancelled: don't send it again; `pending` waits for its result.";
 
 pub struct Server {
     backend: Box<dyn Backend>,
@@ -196,7 +186,7 @@ impl Server {
                     "protocolVersion": version,
                     "capabilities": {"tools": {"listChanged": false}, "resources": {"listChanged": false}},
                     "serverInfo": {"name": "solidcraft", "title": "SolidCraft", "version": env!("CARGO_PKG_VERSION")},
-                    "instructions": format!("{INSTRUCTIONS} Backend: {}.", self.backend.describe()),
+                    "instructions": format!("{} Backend: {}.", guidance::instructions(), self.backend.describe()),
                 }))
             }
             "ping" => Ok(json!({})),
