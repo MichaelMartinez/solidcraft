@@ -698,7 +698,7 @@ impl ApiBackend {
                 tools: Vec::new(),
                 tool_names: Vec::new(),
                 history: Vec::new(),
-                note: super::acp::SYSTEM_NOTE.to_string(),
+                note: super::acp::system_note(""),
                 session_id,
                 gemini_sigs: Default::default(),
                 events: ev_tx,
@@ -2060,7 +2060,7 @@ mod tests {
         assert_eq!(sent[0]["messages"][0]["content"], super::super::acp::system_note("Use M3 screws."));
         let roles: Vec<&str> = sent[1]["messages"].as_array().unwrap().iter().map(|m| m["role"].as_str().unwrap_or("")).collect();
         assert_eq!(roles, ["system", "user"]);
-        assert_eq!(sent[1]["messages"][0]["content"], super::super::acp::SYSTEM_NOTE);
+        assert_eq!(sent[1]["messages"][0]["content"], super::super::acp::system_note(""));
         assert_eq!(sent[1]["messages"][1]["content"], "two");
         b.shutdown(true);
     }
@@ -2822,7 +2822,7 @@ mod tests {
             tools: vec![json!({"type": "function", "function": {"name": "measure"}})],
             tool_names: vec!["measure".into()],
             history: vec![json!({"role": "user", "content": "hi"})],
-            note: super::super::acp::SYSTEM_NOTE.to_string(),
+            note: super::super::acp::system_note(""),
             session_id: "test-session".to_string(),
             gemini_sigs: Default::default(),
             events,
@@ -3043,7 +3043,7 @@ mod tests {
         assert!(matches!(events.last(), Some(Event::TurnEnded { reason }) if reason.is_empty()), "{events:?}");
         let sent = seen.lock().unwrap();
         assert_eq!(sent.len(), 2);
-        assert_eq!(sent[0]["system"], super::super::acp::SYSTEM_NOTE);
+        assert_eq!(sent[0]["system"], super::super::acp::system_note(""));
         assert_eq!(sent[0]["max_tokens"], ANTHROPIC_MAX_TOKENS);
         assert_eq!(sent[1]["messages"].as_array().unwrap().last().unwrap()["content"][0]["type"], "tool_result");
         assert_eq!(sent[1]["messages"].as_array().unwrap().last().unwrap()["content"][0]["tool_use_id"], "t1");

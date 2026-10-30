@@ -66,7 +66,7 @@ impl AcpBackend {
             cwd,
             bridge,
             init: Value::Null,
-            note: acp::SYSTEM_NOTE.to_string(),
+            note: acp::system_note(""),
             next_id: 0,
             pending: HashMap::new(),
             session: None,
@@ -369,7 +369,7 @@ pub fn test_agent(argv: &[String], cwd: &std::path::Path) -> Result<String, Test
     let init = wait_for(&p, 1);
     let session_cwd = if acp::runs_in_wsl(argv) { acp::wsl_path(cwd) } else { cwd.to_path_buf() };
     let result = init.and_then(|v| {
-        p.send(&acp::request(2, "session/new", acp::session_new_params(&session_cwd, None, &v, acp::SYSTEM_NOTE)));
+        p.send(&acp::request(2, "session/new", acp::session_new_params(&session_cwd, None, &v, &acp::system_note(""))));
         wait_for(&p, 2).map(|_| {
             let who = acp::agent_info(&v);
             solidcraft_ui_text::format("ui.ai_test_acp_ok", &[("agent", if who.is_empty() { "?" } else { &who })])

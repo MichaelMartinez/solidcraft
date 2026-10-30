@@ -224,30 +224,25 @@ pub fn wsl_path(path: &std::path::Path) -> std::path::PathBuf {
     }
 }
 
-/// What every session is told about where it is. An agent with no route for it in
-/// [`session_new_params`] doesn't get it.
-pub const SYSTEM_NOTE: &str = "You are running inside SolidCraft, a parametric 3D CAD application, as the user's assistant. \
-The open design is reachable through the `solidcraft-app` MCP server: use its tools (list_commands, batch, execute, inspect_design, \
-measure, screenshot, set_parameter, undo, skill_reference) to read and change the design the user is looking at, and verify with \
-measure or inspect_design. Before building anything beyond one primitive, read `skill_reference` for `solidcraft-modeling` (its \
-SKILL.md has the workflow, its reference.md the command shapes and this version's traps), work the numbers out first, and after \
-each stage compare `measure` with them. Prefer one `batch` over many small calls. Saving, opening or exporting files waits for the user's approval in \
-the chat, and each message allows a limited number of changes. Don't use shell or file tools: work through the SolidCraft tools. \
-Keep answers short.";
-
 /// The most of the user's custom instructions (#8220) a session gets, in characters: the
 /// Preferences field takes no more, and a longer text from an edited settings file is cut here.
 pub const INSTRUCTIONS_LIMIT: usize = 4000;
 
-/// [`SYSTEM_NOTE`] with the user's custom instructions (#8220) after it. Blank instructions leave
-/// the note as it is.
+/// What every session is told about where it is, with the user's custom instructions (#8220)
+/// after it. Blank instructions leave the note as it is.
+///
+/// The part before the custom instructions is `solidcraft_engine::guidance`'s: the user's
+/// `<data dir>/instructions/assistant.md` when there is a usable one, the compiled default
+/// otherwise. An ACP session is told once, at `session/new`, so a changed file takes effect from
+/// the next session.
 pub fn system_note(instructions: &str) -> String {
+    let base = solidcraft_engine::guidance::assistant_note();
     let text: String = instructions.trim().chars().take(INSTRUCTIONS_LIMIT).collect();
     let text = text.trim_end();
     if text.is_empty() {
-        return SYSTEM_NOTE.to_string();
+        return base;
     }
-    format!("{SYSTEM_NOTE}\n\nThe user's custom instructions, set in SolidCraft's preferences:\n{text}")
+    format!("{base}\n\nThe user's custom instructions, set in SolidCraft's preferences:\n{text}")
 }
 
 /// The Claude Code adapter's own tools that reach the computer rather than the design: turned off
@@ -734,8 +729,9 @@ mod tests {
     #[test]
     fn the_bridge_has_a_name_of_its_own_and_the_note_uses_it() {
         assert_ne!(BRIDGE_NAME, "solidcraft");
-        assert!(SYSTEM_NOTE.contains(&format!("`{BRIDGE_NAME}` MCP server")), "{SYSTEM_NOTE}");
-        assert!(!SYSTEM_NOTE.contains("`solidcraft` MCP server"));
+        let note = solidcraft_engine::guidance::default_assistant_note();
+        assert!(note.contains(&format!("`{BRIDGE_NAME}` MCP server")), "{note}");
+        assert!(!note.contains("`solidcraft` MCP server"));
         // The panel still recognises the bridge's tools as SolidCraft's (agents name them after
         // their server, e.g. `mcp__solidcraft-app__batch`).
         assert!(BRIDGE_NAME.contains("solidcraft"));
@@ -786,14 +782,14 @@ mod tests {
     #[test]
     fn the_session_gets_the_bridged_mcp_server_without_a_token_or_any_path() {
         let b = McpBridge { cli: "/opt/solidcraft/solidcraft-cli".into(), port: 41234 };
-        let p = session_new_params(std::path::Path::new("/home/u/designs"), Some(&b), &json!({}), SYSTEM_NOTE);
+        let p = session_new_params(std::path::Path::new("/home/u/designs"), Some(&b), &json!({}), system_note(""));
         let s = &p["mcpServers"][0];
         assert_eq!(s["name"], BRIDGE_NAME);
         assert_eq!(s["args"], json!(["mcp", "--connect", "127.0.0.1:41234"]));
         let text = p.to_string();
         assert!(!text.contains("allow-any-path") && !text.contains("TOKEN") && !text.contains("token"), "{text}");
         assert!(p["_meta"]["claudeCode"]["options"]["disallowedTools"].as_array().is_some_and(|t| t.iter().any(|x| x == "Bash")));
-        assert_eq!(session_new_params(std::path::Path::new("/tmp"), None, &json!({}), SYSTEM_NOTE)["mcpServers"], json!([]));
+        assert_eq!(session_new_params(std::path::Path::new("/tmp"), None, &json!({}), &system_note(""))["mcpServers"], json!([]));
     }
 
     /// #9811: the note goes by the routes an agent's `initialize` reply offers, and the standard
@@ -835,10 +831,10 @@ mod tests {
     /// ones leave the note as it is.
     #[test]
     fn custom_instructions_follow_the_note_trimmed_and_capped() {
-        assert_eq!(system_note(""), SYSTEM_NOTE);
-        assert_eq!(system_note(" \n\t "), SYSTEM_NOTE);
+        let base = system_note("");
+        assert_eq!(system_note(" \n\t "), base);
         let note = system_note("\n  Use M3 screws.\nPrint flat side down.  \n");
-        assert!(note.starts_with(SYSTEM_NOTE), "{note}");
+        assert!(note.starts_with(&base), "{note}");
         assert!(note.ends_with("preferences:\nUse M3 screws.\nPrint flat side down."), "{note}");
         let note = system_note(&"ż".repeat(INSTRUCTIONS_LIMIT + 10));
         assert_eq!(note.chars().filter(|c| *c == 'ż').count(), INSTRUCTIONS_LIMIT);
@@ -864,7 +860,7 @@ mod tests {
         assert_eq!(wsl(r"\\server\share\x"), r"\\server\share\x");
 
         let b = McpBridge { cli: r"C:\Program Files\SolidCraft\solidcraft-cli.exe".into(), port: 41234 };
-        let p = session_new_params(&wsl_path(std::path::Path::new(r"C:\Users\u\work")), Some(&b.in_wsl()), &json!({}), SYSTEM_NOTE);
+        let p = session_new_params(&wsl_path(std::path::Path::new(r"C:\Users\u\work")), Some(&b.in_wsl()), &json!({}), &system_note(""));
         assert_eq!(p["cwd"], "/mnt/c/Users/u/work");
         assert_eq!(p["mcpServers"][0]["command"], "/mnt/c/Program Files/SolidCraft/solidcraft-cli.exe");
         assert_eq!(p["mcpServers"][0]["args"], json!(["mcp", "--connect", "127.0.0.1:41234"]));

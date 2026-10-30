@@ -1657,7 +1657,7 @@ done
         .filter(|v| v["method"] == "session/new")
         .collect();
     assert_eq!(sessions.len(), 2);
-    let notes = [acp::SYSTEM_NOTE.to_string(), acp::system_note("Print flat side down.")];
+    let notes = [acp::system_note(""), acp::system_note("Print flat side down.")];
     for (session, note) in sessions.iter().zip(&notes) {
         assert_eq!(session.pointer("/params/systemPrompt/content/0/text").and_then(Value::as_str), Some(note.as_str()));
     }
