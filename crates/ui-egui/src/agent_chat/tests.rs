@@ -1389,7 +1389,7 @@ done
         .collect();
     assert_eq!(sessions.len(), 2);
     for session in &sessions {
-        assert_eq!(session.pointer("/params/systemPrompt/content/0/text").and_then(Value::as_str), Some(acp::SYSTEM_NOTE));
+        assert_eq!(session.pointer("/params/systemPrompt/content/0/text").and_then(Value::as_str), Some(acp::system_note().as_str()));
     }
     disconnect(&mut app);
     let _ = std::fs::remove_dir_all(&dir);

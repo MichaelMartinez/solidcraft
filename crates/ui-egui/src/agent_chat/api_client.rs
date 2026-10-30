@@ -1135,7 +1135,7 @@ impl Worker {
         match protocol {
             GoProtocol::Chat => self.body(),
             GoProtocol::Responses => {
-                let mut body = json!({"model": self.cfg.model, "input": go_responses_input(super::acp::SYSTEM_NOTE, &self.history)});
+                let mut body = json!({"model": self.cfg.model, "input": go_responses_input(&super::acp::system_note(), &self.history)});
                 if let Some(tools) = self.go_tools(protocol) {
                     body["tools"] = tools;
                 }
@@ -1145,7 +1145,7 @@ impl Worker {
                 let mut body = json!({
                     "model": self.cfg.model,
                     "max_tokens": ANTHROPIC_MAX_TOKENS,
-                    "system": super::acp::SYSTEM_NOTE,
+                    "system": super::acp::system_note(),
                     "messages": go_anthropic_messages(&self.history),
                 });
                 if let Some(tools) = self.go_tools(protocol) {
@@ -1155,7 +1155,7 @@ impl Worker {
             }
             GoProtocol::Gemini => {
                 let mut body = json!({"contents": go_gemini_contents(&self.history, &self.gemini_sigs.borrow())});
-                body["systemInstruction"] = json!({"parts": [{"text": super::acp::SYSTEM_NOTE}]});
+                body["systemInstruction"] = json!({"parts": [{"text": super::acp::system_note()}]});
                 if let Some(tools) = self.go_tools(protocol) {
                     body["tools"] = tools;
                 }
@@ -1180,7 +1180,7 @@ impl Worker {
         match self.cfg.protocol {
             Protocol::OpenAi => {
                 let mut messages = Vec::with_capacity(self.history.len() + 1);
-                messages.push(json!({"role": "system", "content": super::acp::SYSTEM_NOTE}));
+                messages.push(json!({"role": "system", "content": super::acp::system_note()}));
                 messages.extend(self.history.iter().cloned());
                 let mut body = json!({"model": self.cfg.model, "messages": messages});
                 if let Some(effort) = self.reasoning_effort() {
@@ -1200,7 +1200,7 @@ impl Worker {
                 let mut body = json!({
                     "model": self.cfg.model,
                     "max_tokens": ANTHROPIC_MAX_TOKENS,
-                    "system": super::acp::SYSTEM_NOTE,
+                    "system": super::acp::system_note(),
                     "messages": &self.history,
                 });
                 if !self.tools.is_empty() {
@@ -2985,7 +2985,7 @@ mod tests {
         assert!(matches!(events.last(), Some(Event::TurnEnded { reason }) if reason.is_empty()), "{events:?}");
         let sent = seen.lock().unwrap();
         assert_eq!(sent.len(), 2);
-        assert_eq!(sent[0]["system"], super::super::acp::SYSTEM_NOTE);
+        assert_eq!(sent[0]["system"], super::super::acp::system_note());
         assert_eq!(sent[0]["max_tokens"], ANTHROPIC_MAX_TOKENS);
         assert_eq!(sent[1]["messages"].as_array().unwrap().last().unwrap()["content"][0]["type"], "tool_result");
         assert_eq!(sent[1]["messages"].as_array().unwrap().last().unwrap()["content"][0]["tool_use_id"], "t1");

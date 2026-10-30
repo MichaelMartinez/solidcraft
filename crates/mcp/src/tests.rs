@@ -2391,11 +2391,13 @@ fn skills_name_only_real_tools_and_commands() {
 /// (bare or as a call, `measure {}`) is a tool, a dotted id (`solid.box`) a command in the
 /// engine's registry. A rename or removal can't leave the instructions sending agents to names
 /// the server no longer has.
+///
+/// The compiled default is checked, not what `initialize` sends: a user's own
+/// `<data>/instructions/mcp.md` is their text and may name tools this release does not have.
 #[test]
 fn instructions_name_only_real_tools() {
+    let text = solidcraft_engine::guidance::default_instructions().to_owned();
     let mut s = server();
-    let init = call(&mut s, 1, "initialize", json!({"protocolVersion": PROTOCOL_VERSION, "capabilities": {}}));
-    let text = init["result"]["instructions"].as_str().unwrap().to_owned();
     let tools: Vec<String> = tool_definitions().iter().map(|t| t["name"].as_str().unwrap().to_owned()).collect();
     let commands: Vec<String> =
         tool(&mut s, "list_commands", json!({})).as_array().unwrap().iter().filter_map(|c| c["id"].as_str()).map(str::to_owned).collect();

@@ -211,16 +211,14 @@ pub fn wsl_path(path: &std::path::Path) -> std::path::PathBuf {
     }
 }
 
-/// What every session is told about where it is. An agent with no route for it in
-/// [`session_new_params`] doesn't get it.
-pub const SYSTEM_NOTE: &str = "You are running inside SolidCraft, a parametric 3D CAD application, as the user's assistant. \
-The open design is reachable through the `solidcraft-app` MCP server: use its tools (list_commands, batch, execute, inspect_design, \
-measure, screenshot, set_parameter, undo, skill_reference) to read and change the design the user is looking at, and verify with \
-measure or inspect_design. Before building anything beyond one primitive, read `skill_reference` for `solidcraft-modeling` (its \
-SKILL.md has the workflow, its reference.md the command shapes and this version's traps), work the numbers out first, and after \
-each stage compare `measure` with them. Prefer one `batch` over many small calls. Saving, opening or exporting files waits for the user's approval in \
-the chat, and each message allows a limited number of changes. Don't use shell or file tools: work through the SolidCraft tools. \
-Keep answers short.";
+/// What every session is told about where it is. Agents that don't read `_meta` ignore it.
+///
+/// The text is the user's `assistant.md` when `<data dir>/instructions/` has a usable one, and
+/// `solidcraft_engine::guidance`'s compiled default otherwise. An ACP session is told once, at
+/// `session/new`, so a changed file takes effect from the next session.
+pub fn system_note() -> String {
+    solidcraft_engine::guidance::assistant_note()
+}
 
 /// The Claude Code adapter's own tools that reach the computer rather than the design: turned off
 /// for the session (`_meta.claudeCode.options.disallowedTools`), so it works through SolidCraft's.
@@ -233,7 +231,7 @@ pub fn session_new_params(cwd: &std::path::Path, bridge: Option<&McpBridge>, ini
     let servers: Vec<Value> = bridge.map(McpBridge::to_json).into_iter().collect();
     let mut meta = json!({
         // The Claude adapter's own key, for its versions without the standard field.
-        "systemPrompt": {"append": SYSTEM_NOTE},
+        "systemPrompt": {"append": system_note()},
         // Hosts may opt a session out of "bypass permissions" (the Claude adapter reads it):
         // every tool call the agent asks about reaches the panel.
         // Its own shell and file tools are off: the agent works through SolidCraft's tools.
@@ -242,7 +240,7 @@ pub fn session_new_params(cwd: &std::path::Path, bridge: Option<&McpBridge>, ini
     if takes_antigravity_note(init)
         && let Some(meta) = meta.as_object_mut()
     {
-        meta.insert("antigravity".into(), json!({"systemPrompt": {"append": SYSTEM_NOTE}}));
+        meta.insert("antigravity".into(), json!({"systemPrompt": {"append": system_note()}}));
     }
     let mut params = json!({
         "cwd": cwd.to_string_lossy(),
@@ -252,7 +250,7 @@ pub fn session_new_params(cwd: &std::path::Path, bridge: Option<&McpBridge>, ini
     if takes_standard_note(init)
         && let Some(params) = params.as_object_mut()
     {
-        params.insert("systemPrompt".into(), json!({"mode": "append", "content": [{"type": "text", "text": SYSTEM_NOTE}]}));
+        params.insert("systemPrompt".into(), json!({"mode": "append", "content": [{"type": "text", "text": system_note()}]}));
     }
     params
 }
@@ -695,8 +693,9 @@ mod tests {
     #[test]
     fn the_bridge_has_a_name_of_its_own_and_the_note_uses_it() {
         assert_ne!(BRIDGE_NAME, "solidcraft");
-        assert!(SYSTEM_NOTE.contains(&format!("`{BRIDGE_NAME}` MCP server")), "{SYSTEM_NOTE}");
-        assert!(!SYSTEM_NOTE.contains("`solidcraft` MCP server"));
+        let note = system_note();
+        assert!(note.contains(&format!("`{BRIDGE_NAME}` MCP server")), "{note}");
+        assert!(!note.contains("`solidcraft` MCP server"));
         // The panel still recognises the bridge's tools as SolidCraft's (agents name them after
         // their server, e.g. `mcp__solidcraft-app__batch`).
         assert!(BRIDGE_NAME.contains("solidcraft"));
@@ -720,14 +719,14 @@ mod tests {
     #[test]
     fn the_system_note_takes_every_route_the_agent_offers() {
         let params = |init: Value| session_new_params(std::path::Path::new("/tmp"), None, &init);
-        let standard = json!({"mode": "append", "content": [{"type": "text", "text": SYSTEM_NOTE}]});
+        let standard = json!({"mode": "append", "content": [{"type": "text", "text": system_note()}]});
 
         let offers_standard = params(json!({"agentCapabilities": {"sessionCapabilities": {"systemPrompt": {}}}}));
         assert_eq!(offers_standard["systemPrompt"], standard);
         assert!(offers_standard["_meta"].get("antigravity").is_none());
 
         let offers_antigravity = params(json!({"agentCapabilities": {"_meta": {"antigravity": {"systemPrompt": {"append": true}}}}}));
-        assert_eq!(offers_antigravity["_meta"]["antigravity"]["systemPrompt"]["append"], SYSTEM_NOTE);
+        assert_eq!(offers_antigravity["_meta"]["antigravity"]["systemPrompt"]["append"], system_note());
         assert!(offers_antigravity.get("systemPrompt").is_none());
 
         for none in [
@@ -743,7 +742,7 @@ mod tests {
         // Every session keeps the key older Claude adapters read, and the tools they turn off.
         for init in [json!({}), json!({"agentCapabilities": {"sessionCapabilities": {"systemPrompt": {}}}})] {
             let p = params(init);
-            assert_eq!(p["_meta"]["systemPrompt"]["append"], SYSTEM_NOTE);
+            assert_eq!(p["_meta"]["systemPrompt"]["append"], system_note());
             assert!(p["_meta"]["claudeCode"]["options"]["disallowedTools"].is_array());
         }
     }
