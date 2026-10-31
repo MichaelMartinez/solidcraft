@@ -3,7 +3,7 @@
 //! and the panel. Plus the Add agent dialog: an installed ACP agent, a custom command, or an
 //! endpoint (OpenAI-compatible or Anthropic-compatible, whose key goes to the system keychain).
 
-use super::agents::{self, AgentConfig, Kind, Mode, Protocol};
+use super::agents::{self, AgentConfig, Kind, Mode, Protocol, Reasoning};
 use super::backend::TestError;
 use super::*;
 use crate::ui_kit;

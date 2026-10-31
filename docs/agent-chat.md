@@ -114,6 +114,8 @@ all of it.
 - **Reasoning effort is not permissions.** The agent's thinking setting does not change
   SolidCraft's Ask / Edits / All approval policy. Reasoning options belong to the current session;
   changing them here does not rewrite OpenCode's configuration or another OpenCode session.
+  An API endpoint has no session to ask, so its level is set on the agent itself (see
+  [Add agent](#add-agent)).
 
 Messages use right-aligned user bubbles and plain assistant text. Consecutive tool calls share
 an activity group: click a row to inspect its output; failed calls have an error tint. Approval
@@ -329,7 +331,7 @@ Grok Build also supports `XAI_API_KEY` for users who choose API authentication.
   OpenAI-compatible endpoint for its models; an Anthropic-compatible one gets a short message,
   because not every such endpoint lists models (Qwen's has no model list). For these agents
   SolidCraft runs the conversation itself, with the same tools, limits and questions as for a
-  coding agent, and no cap on model requests per message (Stop ends it). **Request timeout** is how long one model request may
+  coding agent. **Request timeout** is how long one model request may
   take: 300 s by default, from 30 s to an hour. A slow local model (a large model on modest
   hardware, or a long message with many tool results) may need more; raise it here or in the
   endpoint's entry under **Agents**, where a change applies from the next request. A request that
@@ -356,6 +358,10 @@ The key remains in the system keychain. **Test**, model discovery and chat all u
 permission; redirects are not followed. Changing the URL or preset clears consent and requires
 confirmation again. Turning the option off keeps the stored key and disconnects that endpoint's
 conversations, including those in other document tabs.
+
+Two brakes end a message that is going nowhere, whether or not reasoning is set: a model that
+keeps calling the same tool with the same result, and a model that keeps going round after round
+without finishing. Both say so in place of the answer, and Stop still ends a message at once.
 
 For Ollama, choosing a model checks its reported capabilities in the background. If its
 capabilities list lacks `tools`, a warning below the model picker explains that the model can

@@ -8,6 +8,8 @@
 //!
 //! The loop runs on a thread of its own: a model request can take a while.
 
+use std::collections::HashMap;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -28,9 +30,17 @@ const MODEL_NAME_CAP: usize = 256;
 /// Messages kept in the conversation (the system note stays).
 const MAX_HISTORY: usize = 240;
 /// Pictures of the view kept in the conversation. The whole history goes with every request
-/// (up to `MAX_REQUESTS_PER_TURN` per message), so older views are swapped for a short note:
+/// (up to `MAX_ROUNDS_PER_MESSAGE` per message), so older views are swapped for a short note:
 /// otherwise each attached view makes every later request bigger, until the endpoint refuses it.
 const MAX_HISTORY_IMAGES: usize = 2;
+/// Rounds (model requests) one message may take. A model that keeps calling tools without getting
+/// anywhere ends with a clear stop instead of running until the user presses Stop.
+const MAX_ROUNDS_PER_MESSAGE: usize = 64;
+/// How often one call (its name and arguments) may come back with the same result before the turn
+/// stops: a model repeating itself is going in circles, not getting anywhere.
+const MAX_REPEATED_CALLS: usize = 3;
+/// Calls and results remembered for the repeat check, so a long turn cannot grow it without bound.
+const MAX_REPEAT_ENTRIES: usize = 256;
 /// What an older view becomes in the history.
 const DROPPED_VIEW_NOTE: &str = "[an earlier picture of the view, removed to keep the request small]";
 const DROPPED_THINKING_NOTE: &str = "[earlier reasoning, removed with older history]";
@@ -52,6 +62,49 @@ const TEST_TIMEOUT_S: u64 = 60;
 
 /// Tools the model is not offered.
 const HIDDEN_TOOLS: &[&str] = &["crash_reports"];
+
+/// The Go Messages answer as it came, kept beside the OpenAI-shaped history message so a later
+/// request can replay thinking blocks with their signatures. Never sent to a Chat endpoint.
+const RAW_ANTHROPIC: &str = "_anthropic_blocks";
+/// The Go Responses answer's own output items (reasoning included), replayed as they came.
+const RAW_RESPONSES: &str = "_responses_items";
+
+/// One history message for an OpenAI-shaped endpoint: the Go-only raw echoes are metadata for
+/// the other protocols, so they stay out of the request body.
+fn chat_message(m: &Value) -> Value {
+    let mut m = m.clone();
+    if let Some(o) = m.as_object_mut() {
+        o.remove(RAW_ANTHROPIC);
+        o.remove(RAW_RESPONSES);
+    }
+    m
+}
+
+/// Whether this model's backend wants its own reasoning fields replayed in the next request.
+/// Kimi K3 and kin do; most other OpenAI-shaped endpoints do not, and some refuse the fields
+/// (DeepSeek) or fold their chain of thought back into context and keep the turn looping (the
+/// GLM family). Everything else is sent back clean.
+fn replays_reasoning(model: &str) -> bool {
+    model.trim().to_ascii_lowercase().starts_with("kimi-")
+}
+
+/// Whether this call has now answered the same way `MAX_REPEATED_CALLS` times in a row.
+fn repeats_again(seen: &mut HashMap<(String, String), (u64, usize)>, name: &str, args: &Value, text: &str) -> bool {
+    let key = (name.to_string(), args.to_string());
+    if !seen.contains_key(&key) && seen.len() >= MAX_REPEAT_ENTRIES {
+        return false;
+    }
+    let mut hasher = DefaultHasher::new();
+    text.hash(&mut hasher);
+    let hash = hasher.finish();
+    let entry = seen.entry(key).or_insert((hash, 0));
+    if entry.0 == hash {
+        entry.1 += 1;
+    } else {
+        *entry = (hash, 1);
+    }
+    entry.1 >= MAX_REPEATED_CALLS
+}
 
 /// Chat counter for OpenCode Go session IDs, next to the wall clock below.
 static GO_SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -324,14 +377,22 @@ fn go_anthropic_messages(history: &[Value]) -> Vec<Value> {
                 _ => {}
             },
             "assistant" => {
-                if let Some(t) = m.get("content").and_then(Value::as_str).filter(|t| !t.is_empty()) {
-                    go_push_block(&mut out, "assistant", json!({"type": "text", "text": t}));
-                }
-                if let Some(calls) = m.get("tool_calls").and_then(Value::as_array) {
-                    for c in calls {
-                        let (id, name) = openai_tool_call(c);
-                        let input = tool_arguments(c.pointer("/function/arguments")).unwrap_or_else(|_| json!({}));
-                        go_push_block(&mut out, "assistant", json!({"type": "tool_use", "id": id, "name": name, "input": input}));
+                // The answer as it came, thinking blocks and their signatures included, so the
+                // model keeps its chain of thought across rounds instead of re-deriving it.
+                if let Some(blocks) = m.get(RAW_ANTHROPIC).and_then(Value::as_array) {
+                    for b in blocks {
+                        go_push_block(&mut out, "assistant", b.clone());
+                    }
+                } else {
+                    if let Some(t) = m.get("content").and_then(Value::as_str).filter(|t| !t.is_empty()) {
+                        go_push_block(&mut out, "assistant", json!({"type": "text", "text": t}));
+                    }
+                    if let Some(calls) = m.get("tool_calls").and_then(Value::as_array) {
+                        for c in calls {
+                            let (id, name) = openai_tool_call(c);
+                            let input = tool_arguments(c.pointer("/function/arguments")).unwrap_or_else(|_| json!({}));
+                            go_push_block(&mut out, "assistant", json!({"type": "tool_use", "id": id, "name": name, "input": input}));
+                        }
                     }
                 }
             }
@@ -382,23 +443,30 @@ fn go_responses_input(system: &str, history: &[Value]) -> Vec<Value> {
                 _ => {}
             },
             "assistant" => {
-                if let Some(t) = m.get("content").and_then(Value::as_str).filter(|t| !t.is_empty()) {
-                    out.push(json!({"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": t}]}));
-                }
-                if let Some(calls) = m.get("tool_calls").and_then(Value::as_array) {
-                    for c in calls {
-                        let (id, name) = openai_tool_call(c);
-                        let args = match c.pointer("/function/arguments") {
-                            Some(Value::String(s)) if !s.trim().is_empty() => s.clone(),
-                            Some(v @ Value::Object(_)) => v.to_string(),
-                            _ => "{}".to_string(),
-                        };
-                        out.push(json!({
-                            "type": "function_call",
-                            "call_id": id,
-                            "name": name,
-                            "arguments": args,
-                        }));
+                // The answer's own items, replayed as they came. A reasoning item is kept only
+                // when it carries its encrypted state, so an endpoint that does not store
+                // responses is never asked to look up an id it does not have.
+                if let Some(items) = m.get(RAW_RESPONSES).and_then(Value::as_array) {
+                    out.extend(items.iter().cloned());
+                } else {
+                    if let Some(t) = m.get("content").and_then(Value::as_str).filter(|t| !t.is_empty()) {
+                        out.push(json!({"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": t}]}));
+                    }
+                    if let Some(calls) = m.get("tool_calls").and_then(Value::as_array) {
+                        for c in calls {
+                            let (id, name) = openai_tool_call(c);
+                            let args = match c.pointer("/function/arguments") {
+                                Some(Value::String(s)) if !s.trim().is_empty() => s.clone(),
+                                Some(v @ Value::Object(_)) => v.to_string(),
+                                _ => "{}".to_string(),
+                            };
+                            out.push(json!({
+                                "type": "function_call",
+                                "call_id": id,
+                                "name": name,
+                                "arguments": args,
+                            }));
+                        }
                     }
                 }
             }
@@ -517,6 +585,8 @@ struct GoCallAccum {
     text: Vec<(bool, String)>,
     calls: Vec<Call>,
     kept_calls: Vec<Value>,
+    /// Why the answer stopped, mapped like the other protocols' `stop_reason`.
+    stop: &'static str,
 }
 
 impl GoCallAccum {
@@ -533,18 +603,48 @@ impl GoCallAccum {
         self.kept_calls.push(json!({"id": id, "type": "function", "function": {"name": name, "arguments": raw_args}}));
     }
 
-    fn into_reply(self) -> Reply {
-        go_reply_from_parts(self.text, self.calls, self.kept_calls)
+    /// The reply, with the answer as it came kept under `key` when there is anything to replay.
+    fn into_reply(self, key: &'static str, items: Vec<Value>) -> Reply {
+        let mut reply = go_reply_from_parts(self.text, self.calls, self.kept_calls);
+        reply.stop = self.stop;
+        if !items.is_empty() {
+            reply.assistant[key] = Value::Array(items);
+        }
+        reply
     }
 }
 
 /// A Responses API answer as the tool loop's Reply; the kept assistant message
-/// is OpenAI-shaped so the loop stores one history shape for all of Go.
+/// is OpenAI-shaped so the loop stores one history shape for all of Go, and the
+/// answer's own items stay beside it for the next request.
 fn go_responses_reply(body: &Value) -> Reply {
     let mut acc = GoCallAccum::default();
+    // `incomplete` with `max_output_tokens` is this API's version of a cut-off answer.
+    if body.pointer("/incomplete_details/reason").and_then(Value::as_str) == Some("max_output_tokens") {
+        acc.stop = "max_tokens";
+    }
+    let mut kept = Vec::new();
     if let Some(items) = body.get("output").and_then(Value::as_array) {
         for item in items {
             match item.get("type").and_then(Value::as_str) {
+                // The chain of thought is shown, and replayed only when it carries its own
+                // encrypted state: an item that is just an id belongs to a stored response, and
+                // an endpoint that does not store it would refuse the replay.
+                Some("reasoning") => {
+                    let thought: String = item
+                        .get("summary")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|s| s.get("text").and_then(Value::as_str))
+                        .collect();
+                    if !thought.trim().is_empty() {
+                        acc.text.push((true, thought));
+                    }
+                    if item.get("encrypted_content").and_then(Value::as_str).is_some_and(|e| !e.is_empty()) {
+                        kept.push(item.clone());
+                    }
+                }
                 Some("message") => {
                     if let Some(parts) = item.get("content").and_then(Value::as_array) {
                         // One text entry per message, as on the Chat path: parts of a
@@ -554,7 +654,10 @@ fn go_responses_reply(body: &Value) -> Reply {
                             acc.push_text(&joined);
                         }
                     }
+                    kept.push(item.clone());
                 }
+                // A call cut off at the cap has incomplete arguments: not run, not kept.
+                Some("function_call") if acc.stop == "max_tokens" => {}
                 Some("function_call") if !acc.full() => {
                     let id = item.get("call_id").and_then(Value::as_str).map_or_else(|| format!("call-{}", acc.calls.len()), str::to_string);
                     let name = item.get("name").and_then(Value::as_str).unwrap_or("").to_string();
@@ -565,17 +668,19 @@ fn go_responses_reply(body: &Value) -> Reply {
                     };
                     let arguments = tool_arguments(item.get("arguments"));
                     acc.push_call(id, name, arguments, raw_args);
+                    kept.push(item.clone());
                 }
                 _ => {}
             }
         }
     }
-    acc.into_reply()
+    acc.into_reply(RAW_RESPONSES, kept)
 }
 
 /// An Anthropic messages answer as the tool loop's Reply (history stays OpenAI-shaped).
 fn go_messages_reply(body: &Value) -> Reply {
-    let mut acc = GoCallAccum::default();
+    let mut acc = GoCallAccum { stop: stop_reason(body.get("stop_reason").and_then(Value::as_str)), ..Default::default() };
+    let mut kept = Vec::new();
     if let Some(blocks) = body.get("content").and_then(Value::as_array) {
         for b in blocks {
             match b.get("type").and_then(Value::as_str) {
@@ -583,30 +688,48 @@ fn go_messages_reply(body: &Value) -> Reply {
                     if let Some(t) = b.get("text").and_then(Value::as_str).filter(|t| !t.trim().is_empty()) {
                         acc.push_text(t);
                     }
+                    kept.push(b.clone());
                 }
+                // Thinking and its signature are kept together: replaying the text without
+                // the signature is what the API refuses.
+                Some("thinking" | "redacted_thinking") => {
+                    if let Some(t) = b.get("thinking").and_then(Value::as_str).filter(|t| !t.trim().is_empty()) {
+                        acc.text.push((true, t.to_string()));
+                    }
+                    kept.push(b.clone());
+                }
+                // A call cut off at the length limit has incomplete input: not run, not kept.
+                Some("tool_use") if acc.stop == "max_tokens" => {}
                 Some("tool_use") if !acc.full() => {
                     let id = b.get("id").and_then(Value::as_str).map_or_else(|| format!("toolu-{}", acc.calls.len()), str::to_string);
                     let name = b.get("name").and_then(Value::as_str).unwrap_or("").to_string();
                     let raw_args = b.get("input").map(|i| i.to_string()).unwrap_or_else(|| "{}".to_string());
                     let arguments = tool_arguments(b.get("input"));
                     acc.push_call(id, name, arguments, raw_args);
+                    kept.push(b.clone());
                 }
                 _ => {}
             }
         }
     }
-    acc.into_reply()
+    acc.into_reply(RAW_ANTHROPIC, kept)
 }
 
 /// A Gemini answer as the tool loop's Reply (history stays OpenAI-shaped).
 fn go_gemini_reply(body: &Value) -> Reply {
-    let mut acc = GoCallAccum::default();
+    // Gemini names the cap and the safety stops in `finishReason`, in capitals.
+    let stop = match body.pointer("/candidates/0/finishReason").and_then(Value::as_str) {
+        Some("MAX_TOKENS") => "max_tokens",
+        Some("SAFETY" | "PROHIBITED_CONTENT" | "BLOCKLIST" | "RECITATION") => "refusal",
+        _ => "",
+    };
+    let mut acc = GoCallAccum { stop, ..Default::default() };
     if let Some(parts) = body.pointer("/candidates/0/content/parts").and_then(Value::as_array) {
         for p in parts.iter() {
             if let Some(t) = p.get("text").and_then(Value::as_str).filter(|t| !t.is_empty()) {
                 acc.push_text(t);
             } else if let Some(call) = p.get("functionCall") {
-                if acc.full() {
+                if acc.full() || acc.stop == "max_tokens" {
                     continue;
                 }
                 let name = call.get("name").and_then(Value::as_str).unwrap_or("").to_string();
@@ -619,7 +742,7 @@ fn go_gemini_reply(body: &Value) -> Reply {
             }
         }
     }
-    acc.into_reply()
+    acc.into_reply(RAW_ANTHROPIC, Vec::new())
 }
 
 /// A Gemini answer's thought signatures, in function-call part order, to replay
@@ -918,10 +1041,15 @@ impl Worker {
         self.history.push(user_message(self.cfg.protocol, &parts));
         let dropped = drop_old_views(&mut self.history, MAX_HISTORY_IMAGES);
         let trimmed = self.trim_history();
-        if (dropped || trimmed) && self.cfg.protocol == Protocol::Anthropic {
+        // A changed conversation invalidates every signature the earlier thinking was bound to,
+        // whichever protocol will send it (the plain Messages path and Go Messages alike).
+        if dropped || trimmed {
             drop_thinking(&mut self.history);
         }
-        // No cap on requests: Stop sets `cancel`, checked at the top of every round.
+        // Stop sets `cancel`; the rounds cap and the repeat check catch a model that would
+        // otherwise run until the user presses it.
+        let mut rounds = 0usize;
+        let mut repeated: HashMap<(String, String), (u64, usize)> = HashMap::new();
         loop {
             // The history as of here is complete (every tool call answered): a cancelled request
             // goes back to it, so no half-finished round is left to confuse the next message.
@@ -930,6 +1058,11 @@ impl Worker {
                 self.emit(Event::TurnEnded { reason: "cancelled".into() });
                 return;
             }
+            if rounds >= MAX_ROUNDS_PER_MESSAGE {
+                self.emit(Event::TurnEnded { reason: "rounds".into() });
+                return;
+            }
+            rounds += 1;
             let reply = match self.request() {
                 Ok(_) if self.cancel.load(Ordering::Relaxed) => {
                     self.history.truncate(sound);
@@ -959,6 +1092,7 @@ impl Worker {
             // Anthropic takes every result of a round in one user message; OpenAI takes one
             // `tool` message per call.
             let mut results = Vec::new();
+            let mut stop_after: Option<&'static str> = None;
             for c in reply.calls.iter().take(32) {
                 let args = c.arguments.clone().unwrap_or_else(|_| json!({}));
                 let title = tool_title(&c.name, &args);
@@ -993,15 +1127,27 @@ impl Worker {
                     input: None,
                     output: Some(shown),
                 });
+                // A repeated failure is as much a circle as a repeated success: the model is
+                // getting the same answer and asking again regardless.
+                if repeats_again(&mut repeated, &c.name, &args, &text) {
+                    stop_after = Some("loop");
+                }
                 match self.cfg.protocol {
                     Protocol::OpenAi => self.history.push(json!({"role": "tool", "tool_call_id": c.id, "content": text})),
                     Protocol::Anthropic => {
                         results.push(json!({"type": "tool_result", "tool_use_id": c.id, "content": text, "is_error": failed}));
                     }
                 }
+                if stop_after.is_some() {
+                    break;
+                }
             }
             if self.cfg.protocol == Protocol::Anthropic && !results.is_empty() {
                 self.history.push(json!({"role": "user", "content": results}));
+            }
+            if let Some(reason) = stop_after {
+                self.emit(Event::TurnEnded { reason: reason.into() });
+                return;
             }
         }
     }
@@ -1046,12 +1192,12 @@ impl Worker {
             self.no_reasoning.set(true);
             body["reasoning_effort"] = json!("none");
             let (status, v) = self.post(&body)?;
-            return if status == 200 { Ok(reply(self.cfg.protocol, &v)) } else { Err(http_error(status, &v)) };
+            return if status == 200 { Ok(reply(self.cfg.protocol, &self.cfg.model, &v)) } else { Err(http_error(status, &v)) };
         }
         if status != 200 {
             return Err(http_error(status, &v));
         }
-        Ok(reply(self.cfg.protocol, &v))
+        Ok(reply(self.cfg.protocol, &self.cfg.model, &v))
     }
 
     /// One Go model on its own protocol, falling through to the next protocol when
@@ -1086,7 +1232,7 @@ impl Worker {
                     body["reasoning_effort"] = json!("none");
                     let (status, v) = self.go_post(protocol, &body)?;
                     if status == 200 {
-                        return Ok(reply(self.cfg.protocol, &v));
+                        return Ok(reply(self.cfg.protocol, &self.cfg.model, &v));
                     }
                     let e = http_error(status, &v);
                     if first_err.is_none() {
@@ -1100,9 +1246,9 @@ impl Worker {
             }
             if status == 200 {
                 if protocol == GoProtocol::Chat {
-                    return Ok(reply(self.cfg.protocol, &v));
+                    return Ok(reply(self.cfg.protocol, &self.cfg.model, &v));
                 }
-                let made = Self::go_reply(protocol, &v);
+                let made = Self::go_reply(protocol, &self.cfg.model, &v);
                 if protocol == GoProtocol::Gemini {
                     // Remember thought signatures for the next tool request in this turn.
                     let mut sigs = self.gemini_sigs.borrow_mut();
@@ -1147,6 +1293,9 @@ impl Worker {
             GoProtocol::Chat => self.body(),
             GoProtocol::Responses => {
                 let mut body = json!({"model": self.cfg.model, "input": go_responses_input(&self.note, &self.history)});
+                if let Some(effort) = self.reasoning_effort() {
+                    body["reasoning"] = json!({"effort": effort});
+                }
                 if let Some(tools) = self.go_tools(protocol) {
                     body["tools"] = tools;
                 }
@@ -1176,9 +1325,9 @@ impl Worker {
     }
 
     /// A non-chat Go answer as the tool loop's Reply.
-    fn go_reply(protocol: GoProtocol, body: &Value) -> Reply {
+    fn go_reply(protocol: GoProtocol, model: &str, body: &Value) -> Reply {
         match protocol {
-            GoProtocol::Chat => reply(Protocol::OpenAi, body),
+            GoProtocol::Chat => reply(Protocol::OpenAi, model, body),
             GoProtocol::Responses => go_responses_reply(body),
             GoProtocol::Messages => go_messages_reply(body),
             GoProtocol::Gemini => go_gemini_reply(body),
@@ -1192,7 +1341,7 @@ impl Worker {
             Protocol::OpenAi => {
                 let mut messages = Vec::with_capacity(self.history.len() + 1);
                 messages.push(json!({"role": "system", "content": self.note}));
-                messages.extend(self.history.iter().cloned());
+                messages.extend(self.history.iter().map(chat_message));
                 let mut body = json!({"model": self.cfg.model, "messages": messages});
                 if let Some(effort) = self.reasoning_effort() {
                     // The user's choice goes out on every request, ahead of any `none` the
@@ -1404,9 +1553,9 @@ fn stop_reason(reason: Option<&str>) -> &'static str {
 }
 
 /// The answer in the endpoint's shape.
-fn reply(protocol: Protocol, body: &Value) -> Reply {
+fn reply(protocol: Protocol, model: &str, body: &Value) -> Reply {
     match protocol {
-        Protocol::OpenAi => openai_reply(body),
+        Protocol::OpenAi => openai_reply(model, body),
         Protocol::Anthropic => anthropic_reply(body),
     }
 }
@@ -1429,7 +1578,7 @@ fn sanitize_reasoning_details(details: Option<&Value>) -> Option<Value> {
     Some(Value::Array(clean))
 }
 
-fn openai_reply(body: &Value) -> Reply {
+fn openai_reply(model: &str, body: &Value) -> Reply {
     let message = body.pointer("/choices/0/message").cloned().unwrap_or(Value::Null);
     let text = message.get("content").and_then(Value::as_str).filter(|t| !t.is_empty()).map(|t| vec![(false, t.to_string())]).unwrap_or_default();
     let refused = message.get("refusal").and_then(Value::as_str).is_some_and(|r| !r.trim().is_empty());
@@ -1452,17 +1601,19 @@ fn openai_reply(body: &Value) -> Reply {
         })
         .collect();
     let mut assistant = json!({"role": "assistant", "content": message.get("content").cloned().unwrap_or(Value::Null)});
-    // Thinking models (Kimi K3 and kin) need their reasoning back on the next
-    // tool request: replay exactly what the endpoint sent, nothing invented.
-    for key in ["reasoning_content", "reasoning", "refusal"] {
-        if let Some(v) = message.get(key)
-            && !v.is_null()
-        {
-            assistant[key] = v.clone();
+    // Only a family that needs it gets its reasoning replayed, exactly as the endpoint sent it,
+    // nothing invented: every other model is sent back clean (see `replays_reasoning`).
+    if replays_reasoning(model) {
+        for key in ["reasoning_content", "reasoning", "refusal"] {
+            if let Some(v) = message.get(key)
+                && !v.is_null()
+            {
+                assistant[key] = v.clone();
+            }
         }
-    }
-    if let Some(clean) = sanitize_reasoning_details(message.get("reasoning_details")) {
-        assistant["reasoning_details"] = clean;
+        if let Some(clean) = sanitize_reasoning_details(message.get("reasoning_details")) {
+            assistant["reasoning_details"] = clean;
+        }
     }
     if !raw.is_empty() {
         assistant["tool_calls"] = Value::Array(raw);
@@ -1550,17 +1701,35 @@ fn drop_old_views(history: &mut [Value], keep: usize) -> bool {
     dropped
 }
 
-/// Takes Anthropic thinking blocks out of every earlier reply. Each one is signed against all
-/// the conversation before it, so once a dropped view or trimmed message changes that, the API
-/// refuses the whole request (#9417); leaving earlier thinking out is allowed. A reply that was
-/// only thinking keeps a note, as the API takes no assistant message without content.
+/// A thinking block, in either place one is kept: the Anthropic-shaped content or a Go answer.
+fn is_thinking(block: &Value) -> bool {
+    matches!(block.get("type").and_then(Value::as_str), Some("thinking" | "redacted_thinking"))
+}
+
+/// Takes earlier thinking out of the history: each block is signed against all the conversation
+/// before it, so once a dropped view or trimmed message changes that, the API refuses the whole
+/// request (#9417); leaving earlier thinking out is allowed. Covers both the Anthropic-shaped
+/// history and the Go Messages answer kept beside it. A reply that was only thinking keeps a
+/// note, as the API takes no assistant message without content.
 fn drop_thinking(history: &mut [Value]) {
     for msg in history.iter_mut().filter(|m| m["role"] == "assistant") {
-        let Some(content) = msg.get_mut("content").and_then(Value::as_array_mut) else { continue };
-        let before = content.len();
-        content.retain(|b| !matches!(b.get("type").and_then(Value::as_str), Some("thinking" | "redacted_thinking")));
-        if content.is_empty() && before > 0 {
-            content.push(json!({"type": "text", "text": DROPPED_THINKING_NOTE}));
+        if let Some(content) = msg.get_mut("content").and_then(Value::as_array_mut) {
+            let before = content.len();
+            content.retain(|b| !is_thinking(b));
+            if content.is_empty() && before > 0 {
+                content.push(json!({"type": "text", "text": DROPPED_THINKING_NOTE}));
+            }
+        }
+        let mut emptied = false;
+        if let Some(blocks) = msg.get_mut(RAW_ANTHROPIC).and_then(Value::as_array_mut) {
+            blocks.retain(|b| !is_thinking(b));
+            emptied = blocks.is_empty();
+        }
+        if emptied {
+            if let Some(o) = msg.as_object_mut() {
+                o.remove(RAW_ANTHROPIC);
+            }
+            msg["content"] = json!(DROPPED_THINKING_NOTE);
         }
     }
 }
@@ -1798,6 +1967,7 @@ pub fn test_endpoint(http: &HttpFn, base_url: &str, key: Option<&str>, model: &s
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicUsize;
 
     #[test]
     fn mcp_tools_become_function_tools_without_crash_reports() {
@@ -2331,7 +2501,7 @@ mod tests {
             (GoProtocol::Messages, json!({"content": []})),
             (GoProtocol::Gemini, json!({"candidates": []})),
         ] {
-            let n = Worker::go_reply(protocol, &v);
+            let n = Worker::go_reply(protocol, "m", &v);
             assert!(n.text.is_empty() && n.calls.is_empty(), "{v}");
             assert!(n.assistant.get("tool_calls").is_none(), "{v}");
         }
@@ -2382,24 +2552,32 @@ mod tests {
         assert_eq!(contents[3]["parts"][0]["functionResponse"]["name"], "batch");
     }
 
-    /// A Chat answer keeps the thinking fields the endpoint sent, so the next
-    /// tool request replays them (Kimi K3 needs its reasoning back); only the
-    /// streaming-only `index` members are dropped.
+    /// Only a family that needs its reasoning back gets it replayed (Kimi K3 and kin); every
+    /// other OpenAI-shaped model is sent back clean, and only the streaming-only `index` members
+    /// are dropped.
     #[test]
-    fn openai_replies_keep_reasoning_fields_for_replay() {
-        let r = openai_reply(&json!({"choices": [{"message": {
+    fn reasoning_is_replayed_only_for_the_families_that_need_it() {
+        let body = json!({"choices": [{"message": {
             "role": "assistant",
             "content": "Measuring.",
             "reasoning_content": "pick the tool",
             "reasoning_details": [{"type": "reasoning.text", "text": "pick", "index": 0}],
             "refusal": null,
             "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "measure", "arguments": "{}"}}],
-        }}]}));
+        }}]});
+        let r = openai_reply("kimi-k3", &body);
         assert_eq!(r.assistant["reasoning_content"], "pick the tool");
         assert_eq!(r.assistant["reasoning_details"][0]["text"], "pick");
         assert!(r.assistant["reasoning_details"][0].get("index").is_none());
         assert!(r.assistant.get("refusal").is_none(), "null fields stay out");
         assert_eq!(r.calls.len(), 1);
+        for model in ["glm-5.3-flash", "minimax-m3", "gpt-6-luna", "deepseek-reasoner", "qwen3.8-max"] {
+            let plain = openai_reply(model, &body);
+            assert!(plain.assistant.get("reasoning_content").is_none(), "{model}: reasoning replayed");
+            assert!(plain.assistant.get("reasoning_details").is_none(), "{model}: reasoning details replayed");
+            assert_eq!(plain.calls.len(), 1, "{model}");
+            assert_eq!(plain.assistant["content"], "Measuring.", "{model}");
+        }
     }
 
     /// The model list and connection test are plain GETs: no session header.
@@ -2948,7 +3126,7 @@ mod tests {
         assert!(cut.calls.is_empty());
         assert_eq!(cut.assistant["content"], json!([thinking]));
 
-        let openai = |finish: &str, message: Value| openai_reply(&json!({"choices": [{"message": message, "finish_reason": finish}]}));
+        let openai = |finish: &str, message: Value| openai_reply("m", &json!({"choices": [{"message": message, "finish_reason": finish}]}));
         let calls = json!([{"id": "c1", "type": "function", "function": {"name": "measure", "arguments": "{\"a\""}}]);
         assert_eq!(openai("stop", json!({"content": "Hi"})).stop, "");
         assert_eq!(openai("content_filter", json!({"content": null})).stop, "refusal");
@@ -3133,5 +3311,201 @@ mod tests {
         drop(sent);
         assert!(test_anthropic_endpoint(&http, "http://10.0.0.2/anthropic", Some("k"), "m").is_err());
         assert!(test_anthropic_endpoint(&http, "https://api.anthropic.com", None, "").is_err());
+    }
+
+    // Reasoning level, the loop's brakes, and the answer Go keeps beside the history.
+
+    fn endpoint_cfg(protocol: Protocol, base_url: &str, model: &str) -> ApiConfig {
+        let http: HttpFn = Arc::new(|_: &HttpRequest| Ok((200, b"{}".to_vec())));
+        ApiConfig {
+            name: "Test".into(),
+            protocol,
+            base_url: base_url.into(),
+            model: model.into(),
+            key: None,
+            http,
+            request_timeout_s: 300,
+            reasoning_effort: String::new(),
+        }
+    }
+
+    /// Run one prompt against a scripted endpoint and return the request bodies it received.
+    fn sent_bodies(cfg: ApiConfig, answer: Value) -> Vec<Value> {
+        let seen = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+        let log = seen.clone();
+        let answer = answer.to_string().into_bytes();
+        let cfg = ApiConfig {
+            http: Arc::new(move |r: &HttpRequest| {
+                if r.method == "GET" {
+                    return Ok((200, b"{\"data\":[]}".to_vec()));
+                }
+                if let Some(body) = &r.body
+                    && let Ok(v) = serde_json::from_slice(body)
+                {
+                    log.lock().unwrap().push(v);
+                }
+                Ok((200, answer.clone()))
+            }),
+            ..cfg
+        };
+        let mut b = ApiBackend::start(cfg, go_ctx()).unwrap();
+        b.prompt(&[PromptPart::Text("hi".into())]);
+        let _ = wait_for_turn(&mut b);
+        b.shutdown(true);
+        seen.lock().unwrap().clone()
+    }
+
+    /// A model that calls the same tool with the same arguments, and gets the same result, is
+    /// going in circles: the turn stops instead of running until the user presses Stop.
+    #[test]
+    fn a_model_that_repeats_the_same_call_is_stopped() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let count = calls.clone();
+        let http: HttpFn = Arc::new(move |r: &HttpRequest| {
+            if r.method == "GET" {
+                return Ok((200, b"{\"data\":[]}".to_vec()));
+            }
+            count.fetch_add(1, Ordering::SeqCst);
+            let body = json!({"choices": [{
+                "message": {"role": "assistant", "content": null, "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "measure", "arguments": "{}"}}]},
+                "finish_reason": "tool_calls",
+            }]});
+            Ok((200, body.to_string().into_bytes()))
+        });
+        let cfg = ApiConfig { http, ..endpoint_cfg(Protocol::OpenAi, "http://localhost:1/v1", "m") };
+        let mut b = ApiBackend::start(cfg, go_ctx()).unwrap();
+        b.prompt(&[PromptPart::Text("go".into())]);
+        let events = wait_for_turn(&mut b);
+        b.shutdown(true);
+        assert!(matches!(events.last(), Some(Event::TurnEnded { reason }) if reason == "loop"), "{events:?}");
+        assert_eq!(calls.load(Ordering::SeqCst), MAX_REPEATED_CALLS);
+    }
+
+    /// A model that keeps calling with something new never runs past the round cap.
+    #[test]
+    fn a_model_that_never_finishes_is_cut_at_the_round_cap() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let count = calls.clone();
+        let http: HttpFn = Arc::new(move |r: &HttpRequest| {
+            if r.method == "GET" {
+                return Ok((200, b"{\"data\":[]}".to_vec()));
+            }
+            let n = count.fetch_add(1, Ordering::SeqCst);
+            let args = format!("{{\"n\":{n}}}");
+            let body = json!({"choices": [{
+                "message": {"role": "assistant", "content": null, "tool_calls": [{"id": format!("c{n}"), "type": "function", "function": {"name": "measure", "arguments": args}}]},
+                "finish_reason": "tool_calls",
+            }]});
+            Ok((200, body.to_string().into_bytes()))
+        });
+        let cfg = ApiConfig { http, ..endpoint_cfg(Protocol::OpenAi, "http://localhost:1/v1", "m") };
+        let mut b = ApiBackend::start(cfg, go_ctx()).unwrap();
+        b.prompt(&[PromptPart::Text("go".into())]);
+        let events = wait_for_turn(&mut b);
+        b.shutdown(true);
+        assert!(matches!(events.last(), Some(Event::TurnEnded { reason }) if reason == "rounds"), "{events:?}");
+        assert_eq!(calls.load(Ordering::SeqCst), MAX_ROUNDS_PER_MESSAGE);
+    }
+
+    /// Go Messages used to flatten every answer into text and tool calls, so a thinking model
+    /// lost its chain of thought (and the signature bound to it) every round. It now goes back
+    /// as it came, and never leaks into a Chat request.
+    #[test]
+    fn go_messages_carries_thinking_and_its_signature_across_rounds() {
+        let seen = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+        let log = seen.clone();
+        let round = Arc::new(AtomicUsize::new(0));
+        let n = round.clone();
+        let http: HttpFn = Arc::new(move |r: &HttpRequest| {
+            if r.method == "GET" {
+                return Ok((200, b"{\"data\":[]}".to_vec()));
+            }
+            if let Some(body) = &r.body
+                && let Ok(v) = serde_json::from_slice(body)
+            {
+                log.lock().unwrap().push(v);
+            }
+            let first = n.fetch_add(1, Ordering::SeqCst) == 0;
+            let body = if first {
+                json!({"content": [
+                    {"type": "thinking", "thinking": "check the box", "signature": "sig-1"},
+                    {"type": "tool_use", "id": "t1", "name": "measure", "input": {}},
+                ], "stop_reason": "tool_use"})
+            } else {
+                json!({"content": [{"type": "text", "text": "done"}], "stop_reason": "end_turn"})
+            };
+            Ok((200, body.to_string().into_bytes()))
+        });
+        let cfg = ApiConfig { http, ..endpoint_cfg(Protocol::OpenAi, "https://opencode.ai/zen/go/v1", "claude-haiku-5-5") };
+        let mut b = ApiBackend::start(cfg, go_ctx()).unwrap();
+        b.prompt(&[PromptPart::Text("hi".into())]);
+        let events = wait_for_turn(&mut b);
+        b.shutdown(true);
+        let sent = seen.lock().unwrap();
+        assert_eq!(sent.len(), 2, "{sent:?}");
+        let assistant = sent[1]["messages"].as_array().unwrap().iter().find(|m| m["role"] == "assistant").expect("the assistant turn");
+        assert_eq!(assistant["content"][0], json!({"type": "thinking", "thinking": "check the box", "signature": "sig-1"}));
+        assert!(sent.iter().all(|b| !b.to_string().contains(RAW_ANTHROPIC)), "the raw echo must not reach an endpoint");
+        assert!(events.iter().any(|e| matches!(e, Event::Text { thought: true, .. })), "the thought is shown: {events:?}");
+    }
+
+    /// The Go protocols read their own stop field: an answer cut at the cap ends the turn
+    /// instead of running half a tool call.
+    #[test]
+    fn a_go_answer_cut_at_the_cap_ends_the_turn() {
+        for (model, answer) in [
+            ("claude-haiku-5-5", json!({"content": [{"type": "tool_use", "id": "t1", "name": "measure", "input": {}}], "stop_reason": "max_tokens"})),
+            (
+                "muse-spark-1.3-contributor",
+                json!({"status": "incomplete", "incomplete_details": {"reason": "max_output_tokens"}, "output": [
+                    {"type": "function_call", "call_id": "c1", "name": "measure", "arguments": "{}"},
+                ]}),
+            ),
+            (
+                "gemini-4-argon-contributor",
+                json!({"candidates": [{"content": {"parts": [{"functionCall": {"name": "measure", "args": {}}}]}, "finishReason": "MAX_TOKENS"}]}),
+            ),
+        ] {
+            let body = answer.to_string().into_bytes();
+            let http: HttpFn = Arc::new(move |r: &HttpRequest| Ok((200, if r.method == "GET" { b"{\"data\":[]}".to_vec() } else { body.clone() })));
+            let cfg = ApiConfig { http, ..endpoint_cfg(Protocol::OpenAi, "https://opencode.ai/zen/go/v1", model) };
+            let mut b = ApiBackend::start(cfg, go_ctx()).unwrap();
+            b.prompt(&[PromptPart::Text("go".into())]);
+            let events = wait_for_turn(&mut b);
+            b.shutdown(true);
+            assert!(matches!(events.last(), Some(Event::TurnEnded { reason }) if reason == "max_tokens"), "{model}: {events:?}");
+            assert!(!events.iter().any(|e| matches!(e, Event::Tool { .. })), "{model}: a cut-off call must not run");
+        }
+    }
+
+    /// The Go-only raw echo is metadata for the other protocols: a Chat request never carries it.
+    #[test]
+    fn a_chat_request_drops_the_go_raw_answer() {
+        let mut m = json!({"role": "assistant", "content": "hi"});
+        m[RAW_ANTHROPIC] = json!([{"type": "thinking", "thinking": "x", "signature": "s"}]);
+        m[RAW_RESPONSES] = json!([{"type": "reasoning", "id": "r"}]);
+        let sent = chat_message(&m);
+        assert!(sent.get(RAW_ANTHROPIC).is_none() && sent.get(RAW_RESPONSES).is_none());
+        assert_eq!(sent["content"], "hi");
+        assert!(m.get(RAW_ANTHROPIC).is_some(), "the history keeps it for the Messages path");
+    }
+
+    /// Dropping invalidated thinking leaves the rest of the answer, and a thinking-only answer
+    /// becomes a note rather than an assistant message the API refuses.
+    #[test]
+    fn dropping_thinking_keeps_the_rest_of_a_go_answer() {
+        let mut history = vec![json!({"role": "assistant", "content": "hi"})];
+        history[0][RAW_ANTHROPIC] = json!([
+            {"type": "thinking", "thinking": "x", "signature": "s"},
+            {"type": "text", "text": "hi"},
+        ]);
+        drop_thinking(&mut history);
+        assert_eq!(history[0][RAW_ANTHROPIC], json!([{"type": "text", "text": "hi"}]));
+
+        let mut only = vec![json!({"role": "assistant", "content": null})];
+        only[0][RAW_ANTHROPIC] = json!([{"type": "redacted_thinking", "data": "r"}]);
+        drop_thinking(&mut only);
+        assert!(only[0].get(RAW_ANTHROPIC).is_none());
+        assert_eq!(only[0]["content"], DROPPED_THINKING_NOTE);
     }
 }

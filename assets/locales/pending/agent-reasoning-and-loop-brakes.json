@@ -1,0 +1,30 @@
+{
+  "en": {
+    "ui.agent_chat_stopped_loop": "Stopped: the model kept repeating the same call.",
+    "ui.agent_chat_stopped_rounds": "Stopped: the model kept going round after round without finishing."
+  },
+  "ar": {
+    "ui.agent_chat_stopped_loop": "توقف: ظل النموذج يكرر الاستدعاء نفسه.",
+    "ui.agent_chat_stopped_rounds": "توقف: ظل النموذج يكرر الجولات دون أن ينتهي."
+  },
+  "de": {
+    "ui.agent_chat_stopped_loop": "Gestoppt: das Modell hat denselben Aufruf immer wieder wiederholt.",
+    "ui.agent_chat_stopped_rounds": "Gestoppt: das Modell kam Runde um Runde nicht zum Ende."
+  },
+  "he": {
+    "ui.agent_chat_stopped_loop": "נעצר: המודל חזר שוב ושוב על אותה קריאה.",
+    "ui.agent_chat_stopped_rounds": "נעצר: המודל המשיך סבב אחר סבב בלי לסיים."
+  },
+  "ja": {
+    "ui.agent_chat_stopped_loop": "停止しました。モデルが同じ呼び出しを繰り返していました。",
+    "ui.agent_chat_stopped_rounds": "停止しました。モデルが終わらないまま何度も繰り返していました。"
+  },
+  "vi": {
+    "ui.agent_chat_stopped_loop": "Đã dừng: mô hình cứ lặp lại cùng một lệnh gọi.",
+    "ui.agent_chat_stopped_rounds": "Đã dừng: mô hình cứ tiếp tục hết vòng này đến vòng khác mà không hoàn tất."
+  },
+  "zh": {
+    "ui.agent_chat_stopped_loop": "已停止：模型一直在重复同一次调用。",
+    "ui.agent_chat_stopped_rounds": "已停止：模型一轮又一轮地继续，始终没有完成。"
+  }
+}
