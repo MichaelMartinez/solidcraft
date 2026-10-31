@@ -305,8 +305,12 @@ Grok Build also supports `XAI_API_KEY` for users who choose API authentication.
   `https://api.mistral.ai/v1`, Mammouth AI `https://api.mammouth.ai/v1`,
   OpenCode Go `https://opencode.ai/zen/go/v1`, DeepSeek `https://api.deepseek.com`,
   Qwen `https://dashscope-intl.aliyuncs.com/compatible-mode/v1`, Cheaper Inference
-  `https://api.cheaperinference.com/v1`, OpenRouter
-  `https://openrouter.ai/api/v1`) or a custom URL, the model name, and an optional key.
+  `https://api.cheaperinference.com/v1`, OC-Zen `https://opencode.ai/zen/v1`, a local
+  Faenad inference server, OpenRouter
+  `https://openrouter.ai/api/v1`) or a custom URL, the model name, and an optional key. A preset
+  fills the whole form: the model, the reasoning effort, and a request timeout that suits the
+  endpoint (a cold local model can load for a minute before its first token). Every field stays
+  editable before you add the agent.
   OpenCode Go models are routed to their endpoint by themselves (`/responses`,
   `/messages` or Gemini for those families, `/chat/completions` for the rest),
   each conversation request carrying the session header Go asks for, so one

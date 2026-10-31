@@ -3,7 +3,7 @@
 //! and the panel. Plus the Add agent dialog: an installed ACP agent, a custom command, or an
 //! endpoint (OpenAI-compatible or Anthropic-compatible, whose key goes to the system keychain).
 
-use super::agents::{self, AgentConfig, Kind, Mode, Protocol, Reasoning};
+use super::agents::{self, AgentConfig, Kind, Mode, Protocol};
 use super::backend::TestError;
 use super::*;
 use crate::ui_kit;
@@ -360,18 +360,12 @@ fn capability_warning(model: &str, tools: Option<bool>) -> Option<String> {
     (tools == Some(false)).then(|| trf("ui.agent_chat_model_no_tools", &[("model", model)]))
 }
 
-/// Open the Add agent dialog.
+/// Open the Add agent dialog, filled in from the first preset.
 pub fn open_add(app: &mut SolveApp) {
-    let preset = agents::OPENAI_PRESETS.first();
-    app.agent_chat.settings.add = Some(AddState {
-        base_url: preset.map(|p| p.base_url.to_string()).unwrap_or_default(),
-        name: preset.map(|p| p.name.to_string()).unwrap_or_default(),
-        request_timeout_s: agents::DEFAULT_REQUEST_TIMEOUT_S,
-        list_again: true,
-        ..Default::default()
-    });
+    let mut add = AddState::default();
+    choose_preset(&mut add, Protocol::OpenAi, 0);
+    app.agent_chat.settings.add = Some(add);
 }
-
 /// Open the agent dialog on an agent you added, filled with what it holds. The key is never read
 /// back: its field stays empty, and saving with it empty keeps the stored key. Returns false when
 /// `id` is not an added agent (found agents have nothing of yours to edit).
@@ -409,15 +403,25 @@ pub fn open_edit(app: &mut SolveApp, id: &str) -> bool {
     true
 }
 
-/// Take `index` from the protocol's presets, or make the URL empty for a custom endpoint.
+/// Take `index` from the protocol's presets, or leave an empty form for a custom endpoint. A
+/// preset fills the whole form (model, thinking depth, timeout); every field stays editable.
 pub(super) fn choose_preset(s: &mut AddState, protocol: Protocol, index: usize) {
     s.protocol = protocol;
     s.preset = index;
-    if let Some(preset) = agents::presets(protocol).get(index) {
-        s.base_url = preset.base_url.to_string();
-        s.name = preset.name.to_string();
-    } else {
-        s.base_url.clear();
+    match agents::presets(protocol).get(index) {
+        Some(preset) => {
+            s.base_url = preset.base_url.to_string();
+            s.name = preset.name.to_string();
+            s.model = preset.model.to_string();
+            s.reasoning_effort = preset.reasoning_effort.to_string();
+            s.request_timeout_s = preset.request_timeout_s;
+        }
+        None => {
+            s.base_url.clear();
+            s.model.clear();
+            s.reasoning_effort = String::new();
+            s.request_timeout_s = agents::DEFAULT_REQUEST_TIMEOUT_S;
+        }
     }
     s.error = None;
     s.test = None;
@@ -1374,7 +1378,9 @@ fn add_agent(app: &mut SolveApp) -> Result<(), String> {
         }
         AddKind::Api => {
             c.kind = s.protocol.kind();
-            c.ollama = s.protocol == Protocol::OpenAi && s.preset == 0;
+            // The preset list no longer offers Ollama, but a custom URL that is one keeps the
+            // capability check (`/api/version`) it needs.
+            c.ollama = s.protocol == Protocol::OpenAi && (s.name.eq_ignore_ascii_case("Ollama") || s.base_url.contains(":11434"));
             c.base_url = agents::normalize_url(&s.base_url)?;
             c.allow_insecure_http = s.allow_insecure_http();
             c.model = s.model.trim().to_string();
@@ -2514,5 +2520,36 @@ mod card_tests {
         assert_eq!(model(&h).as_deref(), Some("vendor/own"));
         assert_eq!(h.app.preferences.agent_models.get("api-1").map(String::as_str), Some("vendor/own"));
         assert_eq!(seen.lock().unwrap().len(), 1, "listed once");
+    }
+    /// A preset fills the whole form, so one pick gives a working agent; the custom entry is an
+    /// empty form and switching protocol starts on that protocol's first preset.
+    #[test]
+    fn a_preset_fills_the_form_and_custom_starts_empty() {
+        let mut s = AddState::default();
+        let oc_zen = agents::OPENAI_PRESETS.iter().position(|p| p.name == "OC-Zen").expect("the OC-Zen preset");
+        choose_preset(&mut s, Protocol::OpenAi, oc_zen);
+        assert_eq!((s.name.as_str(), s.model.as_str()), ("OC-Zen", "gpt-6-luna"));
+        assert_eq!(s.base_url, "https://opencode.ai/zen/v1");
+        assert_eq!(s.request_timeout_s, agents::DEFAULT_REQUEST_TIMEOUT_S);
+
+        let local = agents::OPENAI_PRESETS.iter().position(|p| p.name == "Faenad local").expect("the local preset");
+        choose_preset(&mut s, Protocol::OpenAi, local);
+        assert_eq!(s.model, "qwen3.8-27b-cad");
+        assert_eq!(s.reasoning_effort, "medium");
+        assert!(s.request_timeout_s > agents::DEFAULT_REQUEST_TIMEOUT_S, "a local model needs room to load");
+
+        // The custom URL is the entry after the presets: the form is cleared, not left on the
+        // last preset picked.
+        choose_preset(&mut s, Protocol::OpenAi, agents::presets(Protocol::OpenAi).len());
+        assert!(s.base_url.is_empty() && s.model.is_empty());
+        assert!(s.reasoning_effort.is_empty());
+        assert_eq!(s.request_timeout_s, agents::DEFAULT_REQUEST_TIMEOUT_S);
+
+        choose_preset(&mut s, Protocol::Anthropic, 0);
+        assert_eq!(s.protocol, Protocol::Anthropic);
+        assert_eq!(s.base_url, "https://api.anthropic.com/v1");
+        choose_preset(&mut s, Protocol::Anthropic, 1);
+        assert_eq!(s.base_url, "https://api.deepseek.com/anthropic");
+        assert_eq!(s.model, "deepseek-chat");
     }
 }

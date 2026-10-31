@@ -106,7 +106,7 @@ pub struct AgentConfig {
     /// API: the endpoint (`…/v1`) and model.
     pub base_url: String,
     pub model: String,
-    /// Added with the Ollama preset (even if its display name changes).
+    /// A local Ollama server: its model capabilities are asked for over `/api/version`.
     pub ollama: bool,
     /// API: a key is stored for it in the system keychain.
     pub key: bool,
@@ -299,33 +299,80 @@ pub fn new_id(p: &crate::prefs::Prefs, prefix: &str) -> String {
     (1..).map(|n| format!("{prefix}-{n}")).find(|id| !p.agents.iter().any(|a| &a.id == id)).unwrap_or_else(|| prefix.to_string())
 }
 
-/// An endpoint people commonly add, with the base URL to start from.
+/// An endpoint this build is set up for, with everything the dialog needs to start from it:
+/// choosing a preset fills the form, and every field stays editable before the agent is added.
 pub struct ApiPreset {
     pub name: &'static str,
     pub base_url: &'static str,
+    /// The model to start on; empty when the endpoint has to be asked for its list.
+    pub model: &'static str,
+    /// The `reasoning_effort` to start on; empty leaves the endpoint's own default.
+    pub reasoning_effort: &'static str,
+    /// Seconds one request may take: a local model may have to load before its first token.
+    pub request_timeout_s: u64,
+}
+
+/// An endpoint this build is set up for, with everything the dialog needs to start from it:
+/// choosing a preset fills the form, and every field stays editable before the agent is added.
+pub struct ApiPreset {
+    pub name: &'static str,
+    pub base_url: &'static str,
+    /// The model to start on; empty when the endpoint has to be asked for its list.
+    pub model: &'static str,
+    /// The `reasoning_effort` to start on; empty leaves the endpoint's own default.
+    pub reasoning_effort: &'static str,
+    /// Seconds one request may take: a local model may have to load before its first token.
+    pub request_timeout_s: u64,
+}
+
+/// A preset that fills only the name and URL: the model is listed when the endpoint is asked for
+/// its models, and the endpoint's own reasoning and timeout apply.
+const fn url_only(name: &'static str, base_url: &'static str) -> ApiPreset {
+    ApiPreset { name, base_url, model: "", reasoning_effort: "", request_timeout_s: DEFAULT_REQUEST_TIMEOUT_S }
 }
 
 /// OpenAI-compatible endpoints people use.
 pub const OPENAI_PRESETS: &[ApiPreset] = &[
-    ApiPreset { name: "Ollama", base_url: "http://localhost:11434/v1" },
-    ApiPreset { name: "LM Studio", base_url: "http://localhost:1234/v1" },
-    ApiPreset { name: "OpenClaw", base_url: "http://localhost:18789/v1" },
-    ApiPreset { name: "OpenAI", base_url: "https://api.openai.com/v1" },
-    ApiPreset { name: "Mistral AI", base_url: "https://api.mistral.ai/v1" },
-    ApiPreset { name: "Mammouth AI", base_url: "https://api.mammouth.ai/v1" },
-    ApiPreset { name: "OpenCode Go", base_url: "https://opencode.ai/zen/go/v1" },
-    ApiPreset { name: "DeepSeek", base_url: "https://api.deepseek.com" },
-    ApiPreset { name: "Qwen", base_url: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1" },
-    ApiPreset { name: "Cheaper Inference", base_url: "https://api.cheaperinference.com/v1" },
-    ApiPreset { name: "OpenRouter", base_url: "https://openrouter.ai/api/v1" },
+    url_only("Ollama", "http://localhost:11434/v1"),
+    url_only("LM Studio", "http://localhost:1234/v1"),
+    url_only("OpenClaw", "http://localhost:18789/v1"),
+    url_only("OpenAI", "https://api.openai.com/v1"),
+    url_only("Mistral AI", "https://api.mistral.ai/v1"),
+    url_only("Mammouth AI", "https://api.mammouth.ai/v1"),
+    url_only("OpenCode Go", "https://opencode.ai/zen/go/v1"),
+    url_only("DeepSeek", "https://api.deepseek.com"),
+    url_only("Qwen", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"),
+    url_only("Cheaper Inference", "https://api.cheaperinference.com/v1"),
+    ApiPreset {
+        name: "OC-Zen",
+        base_url: "https://opencode.ai/zen/v1",
+        model: "gpt-6-luna",
+        reasoning_effort: "",
+        request_timeout_s: DEFAULT_REQUEST_TIMEOUT_S,
+    },
+    ApiPreset {
+        name: "Faenad local",
+        base_url: "http://100.93.124.43:8179/v1",
+        model: "qwen3.8-27b-cad",
+        reasoning_effort: "medium",
+        // A cold model loads before it answers; a minute of that is normal.
+        request_timeout_s: 900,
+    },
+    url_only("OpenRouter", "https://openrouter.ai/api/v1"),
 ];
 
 /// Anthropic-compatible endpoints people use. The base URL is the one their documentation calls
 /// `ANTHROPIC_BASE_URL`: the `/v1` is added where needed.
 pub const ANTHROPIC_PRESETS: &[ApiPreset] = &[
-    ApiPreset { name: "Anthropic", base_url: "https://api.anthropic.com/v1" },
-    ApiPreset { name: "DeepSeek", base_url: "https://api.deepseek.com/anthropic" },
-    ApiPreset { name: "Qwen", base_url: "https://dashscope-intl.aliyuncs.com/apps/anthropic" },
+    url_only("Anthropic", "https://api.anthropic.com/v1"),
+    ApiPreset {
+        name: "DeepSeek",
+        base_url: "https://api.deepseek.com/anthropic",
+        model: "deepseek-chat",
+        reasoning_effort: "",
+        request_timeout_s: DEFAULT_REQUEST_TIMEOUT_S,
+    },
+    url_only("Qwen", "https://dashscope-intl.aliyuncs.com/apps/anthropic"),
 ];
 
 /// The presets offered for an endpoint protocol.
@@ -506,6 +553,19 @@ mod tests {
         assert!(presets(Protocol::OpenAi).iter().any(|p| p.name == "Mammouth AI" && key_safe_for(p.base_url)));
         assert!(presets(Protocol::OpenAi).iter().any(|p| p.name == "Mistral AI" && p.base_url == "https://api.mistral.ai/v1"));
         assert!(presets(Protocol::OpenAi).iter().any(|p| p.name == "Cheaper Inference" && key_safe_for(p.base_url)));
+        // Every preset is usable as it stands: a URL, and a timeout in the range the field takes.
+        for p in presets(Protocol::OpenAi).iter().chain(presets(Protocol::Anthropic)) {
+            assert!(!p.name.is_empty() && p.base_url.starts_with("http"), "{}", p.name);
+            assert!((MIN_REQUEST_TIMEOUT_S..=MAX_REQUEST_TIMEOUT_S).contains(&p.request_timeout_s), "{}", p.name);
+        }
+        assert!(presets(Protocol::OpenAi).iter().any(|p| p.name == "OC-Zen" && p.model == "gpt-6-luna"));
+        let local = presets(Protocol::OpenAi).iter().find(|p| p.name == "Faenad local").expect("the local inference preset");
+        assert_eq!(local.model, "qwen3.8-27b-cad");
+        assert!(local.request_timeout_s >= 600, "a cold local model needs room to load");
+        // The local server asks for no key, so plain HTTP over the tailnet is all it needs.
+        assert_eq!(local.base_url, "http://100.93.124.43:8179/v1");
+        assert!(!key_safe_for(local.base_url), "a key would be refused there, and none is stored");
+        assert!(presets(Protocol::Anthropic).iter().any(|p| p.base_url == "https://api.deepseek.com/anthropic"));
         assert!(presets(Protocol::Anthropic).iter().any(|p| p.base_url == "https://api.anthropic.com/v1"));
         for name in ["DeepSeek", "Qwen"] {
             assert!(presets(Protocol::OpenAi).iter().any(|p| p.name == name), "OpenAI-compatible preset for {name}");
@@ -523,7 +583,8 @@ mod tests {
         assert!(OPENAI_PRESETS.iter().any(|p| p.name == "OpenClaw"));
         for preset in OPENAI_PRESETS.iter().chain(ANTHROPIC_PRESETS) {
             assert_eq!(normalize_url(preset.base_url).as_deref(), Ok(preset.base_url), "{}", preset.name);
-            assert!(key_safe_for(preset.base_url), "{}", preset.name);
+            // The local inference server takes no key, so plain HTTP over the tailnet is all it needs.
+            assert!(key_safe_for(preset.base_url) || preset.name == "Faenad local", "{}", preset.name);
         }
     }
 
