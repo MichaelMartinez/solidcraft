@@ -1,0 +1,79 @@
+{
+  "en": {
+    "ui.ai_reasoning": "Reasoning",
+    "ui.ai_reasoning_hint": "How much the model thinks before it answers. Provider default asks for nothing, so the endpoint behaves as it did before.",
+    "ui.ai_reasoning_provider": "Provider default",
+    "ui.ai_reasoning_none": "None",
+    "ui.ai_reasoning_low": "Low",
+    "ui.ai_reasoning_medium": "Medium",
+    "ui.ai_reasoning_high": "High",
+    "ui.agent_chat_stopped_loop": "Stopped: the model kept repeating the same call.",
+    "ui.agent_chat_stopped_rounds": "Stopped: the model kept going round after round without finishing."
+  },
+  "ar": {
+    "ui.ai_reasoning": "التفكير",
+    "ui.ai_reasoning_hint": "مقدار ما يفكر فيه النموذج قبل أن يجيب. \"الافتراضي لدى المزوّد\" لا يطلب شيئًا، لذا يتصرف الطرف كما كان من قبل.",
+    "ui.ai_reasoning_provider": "الافتراضي لدى المزوّد",
+    "ui.ai_reasoning_none": "بلا",
+    "ui.ai_reasoning_low": "منخفض",
+    "ui.ai_reasoning_medium": "متوسط",
+    "ui.ai_reasoning_high": "عالٍ",
+    "ui.agent_chat_stopped_loop": "توقف: ظل النموذج يكرر الاستدعاء نفسه.",
+    "ui.agent_chat_stopped_rounds": "توقف: ظل النموذج يكرر الجولات دون أن ينتهي."
+  },
+  "de": {
+    "ui.ai_reasoning": "Denktiefe",
+    "ui.ai_reasoning_hint": "Wie viel das Modell nachdenkt, bevor es antwortet. \"Voreinstellung des Anbieters\" fordert nichts an, der Endpunkt verhält sich wie bisher.",
+    "ui.ai_reasoning_provider": "Voreinstellung des Anbieters",
+    "ui.ai_reasoning_none": "Keine",
+    "ui.ai_reasoning_low": "Niedrig",
+    "ui.ai_reasoning_medium": "Mittel",
+    "ui.ai_reasoning_high": "Hoch",
+    "ui.agent_chat_stopped_loop": "Gestoppt: das Modell hat denselben Aufruf immer wieder wiederholt.",
+    "ui.agent_chat_stopped_rounds": "Gestoppt: das Modell kam Runde um Runde nicht zum Ende."
+  },
+  "he": {
+    "ui.ai_reasoning": "חשיבה",
+    "ui.ai_reasoning_hint": "כמה המודל חושב לפני שהוא עונה. ברירת המחדל של הספק אינה דורשת דבר, ולכן נקודת הקצה מתנהגת כמו קודם.",
+    "ui.ai_reasoning_provider": "ברירת המחדל של הספק",
+    "ui.ai_reasoning_none": "ללא",
+    "ui.ai_reasoning_low": "נמוכה",
+    "ui.ai_reasoning_medium": "בינונית",
+    "ui.ai_reasoning_high": "גבוהה",
+    "ui.agent_chat_stopped_loop": "נעצר: המודל חזר שוב ושוב על אותה קריאה.",
+    "ui.agent_chat_stopped_rounds": "נעצר: המודל המשיך סבב אחר סבב בלי לסיים."
+  },
+  "ja": {
+    "ui.ai_reasoning": "推論",
+    "ui.ai_reasoning_hint": "モデルが答える前にどれだけ考えるか。「プロバイダーの既定」では何も要求しないため、エンドポイントはこれまでどおりに動作します。",
+    "ui.ai_reasoning_provider": "プロバイダーの既定",
+    "ui.ai_reasoning_none": "なし",
+    "ui.ai_reasoning_low": "低",
+    "ui.ai_reasoning_medium": "中",
+    "ui.ai_reasoning_high": "高",
+    "ui.agent_chat_stopped_loop": "停止しました。モデルが同じ呼び出しを繰り返していました。",
+    "ui.agent_chat_stopped_rounds": "停止しました。モデルが終わらないまま何度も繰り返していました。"
+  },
+  "vi": {
+    "ui.ai_reasoning": "Suy luận",
+    "ui.ai_reasoning_hint": "Mô hình suy nghĩ bao nhiêu trước khi trả lời. \"Mặc định của nhà cung cấp\" không yêu cầu gì, nên điểm cuối hoạt động như trước.",
+    "ui.ai_reasoning_provider": "Mặc định của nhà cung cấp",
+    "ui.ai_reasoning_none": "Không",
+    "ui.ai_reasoning_low": "Thấp",
+    "ui.ai_reasoning_medium": "Trung bình",
+    "ui.ai_reasoning_high": "Cao",
+    "ui.agent_chat_stopped_loop": "Đã dừng: mô hình cứ lặp lại cùng một lệnh gọi.",
+    "ui.agent_chat_stopped_rounds": "Đã dừng: mô hình cứ tiếp tục hết vòng này đến vòng khác mà không hoàn tất."
+  },
+  "zh": {
+    "ui.ai_reasoning": "推理",
+    "ui.ai_reasoning_hint": "模型在回答前思考多少。“提供方默认”不发送任何要求，因此端点行为与之前相同。",
+    "ui.ai_reasoning_provider": "提供方默认",
+    "ui.ai_reasoning_none": "无",
+    "ui.ai_reasoning_low": "低",
+    "ui.ai_reasoning_medium": "中",
+    "ui.ai_reasoning_high": "高",
+    "ui.agent_chat_stopped_loop": "已停止：模型一直在重复同一次调用。",
+    "ui.agent_chat_stopped_rounds": "已停止：模型一轮又一轮地继续，始终没有完成。"
+  }
+}

@@ -3,7 +3,7 @@
 //! and the panel. Plus the Add agent dialog: an installed ACP agent, a custom command, or an
 //! endpoint (OpenAI-compatible or Anthropic-compatible, whose key goes to the system keychain).
 
-use super::agents::{self, AgentConfig, Kind, Mode, Protocol};
+use super::agents::{self, AgentConfig, Kind, Mode, Protocol, Reasoning};
 use super::backend::TestError;
 use super::*;
 use crate::ui_kit;
@@ -30,6 +30,8 @@ pub struct AddState {
     pub key: String,
     /// Seconds one model request may take.
     pub request_timeout_s: u64,
+    /// How much the model should think before it answers.
+    pub reasoning: Reasoning,
     pub error: Option<String>,
     test: Option<Test>,
 }
@@ -486,7 +488,8 @@ fn agents_section(app: &mut SolveApp, ui: &mut egui::Ui) {
                             }
                         });
                     });
-                    if entry.kind == Kind::Api
+                    // Both endpoint kinds carry these two settings, so both show them.
+                    if entry.kind.is_api()
                         && let Some(c) = app.preferences.agents.iter_mut().find(|c| c.id == entry.id)
                     {
                         ui_kit::settings_form(ui, label_w, |ui| {
@@ -497,6 +500,15 @@ fn agents_section(app: &mut SolveApp, ui: &mut egui::Ui) {
                                     retimed = Some((entry.id.clone(), secs));
                                 }
                             });
+                            let mut index = Reasoning::ALL.iter().position(|r| *r == c.reasoning).unwrap_or(0);
+                            let labels: Vec<&str> = Reasoning::ALL.iter().map(|r| r.label()).collect();
+                            if ui_kit::choice_row(ui, tr("ui.ai_reasoning"), &format!("prefs:ai_reasoning:{}", entry.id), &mut index, &labels)
+                                .on_hover_text(tr("ui.ai_reasoning_hint"))
+                                .changed()
+                                && let Some(pick) = Reasoning::ALL.get(index)
+                            {
+                                c.reasoning = *pick;
+                            }
                         });
                     }
                     if app.preferences.agent_permissions.get(&entry.id) == Some(&Mode::All) {
@@ -673,6 +685,17 @@ pub fn dialog(app: &mut SolveApp, ctx: &egui::Context) {
                     ui_kit::row(ui, tr("ui.ai_request_timeout"), |ui| {
                         timeout_field(ui, &mut s.request_timeout_s, "ai_add:request_timeout");
                     });
+                    ui_kit::row(ui, tr("ui.ai_reasoning"), |ui| {
+                        let mut index = Reasoning::ALL.iter().position(|r| *r == s.reasoning).unwrap_or(0);
+                        let labels: Vec<&str> = Reasoning::ALL.iter().map(|r| r.label()).collect();
+                        let r = ui_kit::dropdown(ui, "ai_add:reasoning", &mut index, &labels).on_hover_text(tr("ui.ai_reasoning_hint"));
+                        crate::scenario::publish_target("ai_add:reasoning", r.rect);
+                        if r.changed()
+                            && let Some(pick) = Reasoning::ALL.get(index)
+                        {
+                            s.reasoning = *pick;
+                        }
+                    });
                     ui_kit::row(ui, tr("ui.ai_key"), |ui| {
                         ui.add_enabled_ui(has_keychain, |ui| {
                             let r = ui_kit::password_field(ui, egui::Id::new("sc_ai_add_key"), &mut s.key, tr("ui.ai_key_hint"));
@@ -711,6 +734,7 @@ pub fn dialog(app: &mut SolveApp, ctx: &egui::Context) {
                 model: s.model.trim().to_string(),
                 key: false,
                 request_timeout_s: s.request_timeout_s,
+                reasoning: s.reasoning,
             };
             let key = Some(s.key.trim().to_string()).filter(|k| !k.is_empty());
             let result = match url {
@@ -762,6 +786,7 @@ fn add_agent(app: &mut SolveApp) -> Result<(), String> {
             c.base_url = agents::normalize_url(&s.base_url)?;
             c.model = s.model.trim().to_string();
             c.request_timeout_s = s.request_timeout_s.clamp(agents::MIN_REQUEST_TIMEOUT_S, agents::MAX_REQUEST_TIMEOUT_S);
+            c.reasoning = s.reasoning;
             if c.model.is_empty() {
                 return Err(tr("ui.ai_need_model").to_string());
             }

@@ -40,6 +40,91 @@ impl Mode {
     }
 }
 
+/// How much a model should think before it answers. `Provider` sends nothing, so every endpoint
+/// behaves exactly as it did before this setting existed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Reasoning {
+    /// Whatever the endpoint does when nothing is asked.
+    #[default]
+    Provider,
+    /// Ask for no thinking, on the endpoints that have a switch for it. Anthropic-shaped
+    /// endpoints have no "off" field, so it is the same as `Provider` there.
+    None,
+    Low,
+    Medium,
+    High,
+}
+
+impl Reasoning {
+    pub const ALL: [Reasoning; 5] = [Reasoning::Provider, Reasoning::None, Reasoning::Low, Reasoning::Medium, Reasoning::High];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Reasoning::Provider => "provider",
+            Reasoning::None => "none",
+            Reasoning::Low => "low",
+            Reasoning::Medium => "medium",
+            Reasoning::High => "high",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Reasoning> {
+        Reasoning::ALL.into_iter().find(|r| r.id() == s)
+    }
+
+    pub fn label(self) -> &'static str {
+        crate::i18n::tr(match self {
+            Reasoning::Provider => "ui.ai_reasoning_provider",
+            Reasoning::None => "ui.ai_reasoning_none",
+            Reasoning::Low => "ui.ai_reasoning_low",
+            Reasoning::Medium => "ui.ai_reasoning_medium",
+            Reasoning::High => "ui.ai_reasoning_high",
+        })
+    }
+
+    /// The `reasoning_effort` an OpenAI-shaped endpoint takes, or `None` to say nothing.
+    pub fn effort(self) -> Option<&'static str> {
+        match self {
+            Reasoning::Provider => None,
+            Reasoning::None => Some("none"),
+            Reasoning::Low => Some("low"),
+            Reasoning::Medium => Some("medium"),
+            Reasoning::High => Some("high"),
+        }
+    }
+
+    /// The same effort for the Responses API, whose lowest setting is `minimal`, not `none`.
+    pub fn responses_effort(self) -> Option<&'static str> {
+        match self {
+            Reasoning::Provider => None,
+            Reasoning::None => Some("minimal"),
+            other => other.effort(),
+        }
+    }
+
+    /// Anthropic's thinking budget in tokens, or `None` when this asks for no thinking.
+    pub fn thinking_budget(self) -> Option<u64> {
+        match self {
+            Reasoning::Low => Some(1024),
+            Reasoning::Medium => Some(4096),
+            Reasoning::High => Some(16384),
+            Reasoning::Provider | Reasoning::None => None,
+        }
+    }
+
+    /// Gemini's thinking budget: 0 turns it off, and a token count caps it.
+    pub fn gemini_budget(self) -> Option<i64> {
+        match self {
+            Reasoning::Provider => None,
+            Reasoning::None => Some(0),
+            Reasoning::Low => Some(1024),
+            Reasoning::Medium => Some(8192),
+            Reasoning::High => Some(24576),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Kind {
@@ -113,6 +198,8 @@ pub struct AgentConfig {
     /// API: how long one model request may take, in seconds (clamped to
     /// [`MIN_REQUEST_TIMEOUT_S`]..=[`MAX_REQUEST_TIMEOUT_S`] where it is used).
     pub request_timeout_s: u64,
+    /// API: how much the model should think before it answers.
+    pub reasoning: Reasoning,
 }
 
 impl Default for AgentConfig {
@@ -127,6 +214,7 @@ impl Default for AgentConfig {
             ollama: false,
             key: false,
             request_timeout_s: DEFAULT_REQUEST_TIMEOUT_S,
+            reasoning: Reasoning::Provider,
         }
     }
 }
@@ -167,6 +255,8 @@ pub struct Entry {
     pub key: bool,
     /// API: seconds one model request may take (in range).
     pub request_timeout_s: u64,
+    /// API: how much the model should think before it answers.
+    pub reasoning: Reasoning,
 }
 
 impl Entry {
@@ -183,6 +273,7 @@ impl Entry {
             model: c.model.clone(),
             key: c.key,
             request_timeout_s: c.request_timeout_s.clamp(MIN_REQUEST_TIMEOUT_S, MAX_REQUEST_TIMEOUT_S),
+            reasoning: c.reasoning,
         }
     }
     /// A short line under the name: the version, the model, or the command.
@@ -214,6 +305,7 @@ pub fn entries(app: &crate::SolveApp) -> Vec<Entry> {
             model: String::new(),
             key: false,
             request_timeout_s: DEFAULT_REQUEST_TIMEOUT_S,
+            reasoning: Reasoning::Provider,
         }));
     }
     out.extend(app.preferences.agents.iter().map(Entry::from_config));
@@ -381,5 +473,32 @@ mod tests {
         let saved = AgentConfig { id: "api-3".into(), kind: Kind::Api, request_timeout_s: 1200, ..Default::default() };
         let back: AgentConfig = serde_json::from_value(serde_json::to_value(&saved).unwrap()).unwrap();
         assert_eq!(back, saved);
+    }
+
+    #[test]
+    fn reasoning_levels_round_trip_and_default_to_the_provider() {
+        for r in Reasoning::ALL {
+            assert_eq!(Reasoning::parse(r.id()), Some(r));
+            let text = serde_json::to_string(&r).unwrap();
+            assert_eq!(serde_json::from_str::<Reasoning>(&text).unwrap(), r, "{text}");
+        }
+        // A preferences file written before the setting asks for nothing, as it used to.
+        let old: AgentConfig = serde_json::from_str(r#"{"id":"api-1","kind":"api","base_url":"http://localhost:11434/v1","model":"m"}"#).unwrap();
+        assert_eq!(old.reasoning, Reasoning::Provider);
+        assert_eq!(old.reasoning.effort(), None);
+        // Each protocol's shape; Anthropic has no "off" field, so none and provider omit it.
+        assert_eq!(Reasoning::High.effort(), Some("high"));
+        assert_eq!(Reasoning::None.effort(), Some("none"));
+        assert_eq!(Reasoning::None.responses_effort(), Some("minimal"));
+        assert_eq!(Reasoning::Provider.responses_effort(), None);
+        assert_eq!(Reasoning::None.thinking_budget(), None);
+        assert_eq!(Reasoning::Medium.thinking_budget(), Some(4096));
+        assert_eq!(Reasoning::High.gemini_budget(), Some(24576));
+        assert_eq!(Reasoning::None.gemini_budget(), Some(0));
+        // The saved setting comes back, on the config and on the entry the chat starts from.
+        let saved = AgentConfig { id: "api-4".into(), kind: Kind::Api, reasoning: Reasoning::Low, ..Default::default() };
+        let back: AgentConfig = serde_json::from_value(serde_json::to_value(&saved).unwrap()).unwrap();
+        assert_eq!(back.reasoning, Reasoning::Low);
+        assert_eq!(Entry::from_config(&saved).reasoning, Reasoning::Low);
     }
 }
