@@ -1569,7 +1569,16 @@ fn sanitize_reasoning_details(details: Option<&Value>) -> Option<Value> {
 
 fn openai_reply(model: &str, body: &Value) -> Reply {
     let message = body.pointer("/choices/0/message").cloned().unwrap_or(Value::Null);
-    let text = message.get("content").and_then(Value::as_str).filter(|t| !t.is_empty()).map(|t| vec![(false, t.to_string())]).unwrap_or_default();
+    let mut text: Vec<(bool, String)> =
+        message.get("content").and_then(Value::as_str).filter(|t| !t.is_empty()).map(|t| vec![(false, t.to_string())]).unwrap_or_default();
+    // A thinking model on an OpenAI-shaped endpoint puts its chain of thought in
+    // `reasoning_content` (or `reasoning`) and the answer in `content`. Show the thought first,
+    // as the Anthropic path shows its thinking blocks, instead of a turn that looks blank.
+    if let Some(thought) =
+        ["reasoning_content", "reasoning"].iter().find_map(|k| message.get(*k).and_then(Value::as_str)).filter(|t| !t.trim().is_empty())
+    {
+        text.insert(0, (true, thought.to_string()));
+    }
     let refused = message.get("refusal").and_then(Value::as_str).is_some_and(|r| !r.trim().is_empty());
     let stop = if refused { "refusal" } else { stop_reason(body.pointer("/choices/0/finish_reason").and_then(Value::as_str)) };
     // No more than the loop answers: every call kept here must get a `tool` message. A call cut
@@ -3447,5 +3456,28 @@ mod tests {
         drop_thinking(&mut only);
         assert!(only[0].get(RAW_ANTHROPIC).is_none());
         assert_eq!(only[0]["content"], DROPPED_THINKING_NOTE);
+    }
+
+    /// A thinking model on an OpenAI-shaped endpoint puts its chain of thought in
+    /// `reasoning_content` and the answer in `content`: both are shown, thought first, so the
+    /// turn does not look blank while the model thinks.
+    #[test]
+    fn an_openai_thinking_model_shows_its_thought() {
+        let r = openai_reply(
+            "qwen3.8-27b-cad",
+            &json!({"choices": [{
+                "message": {"role": "assistant", "content": "Done.", "reasoning_content": "Plan: measure first."},
+                "finish_reason": "stop",
+            }]}),
+        );
+        assert_eq!(r.text, vec![(true, "Plan: measure first.".to_string()), (false, "Done.".to_string())]);
+        // A reasoning-only answer is not a blank turn either.
+        let cut =
+            openai_reply("local", &json!({"choices": [{"message": {"content": "", "reasoning": "Still thinking."}, "finish_reason": "length"}]}));
+        assert_eq!(cut.text, vec![(true, "Still thinking.".to_string())]);
+        assert_eq!(cut.stop, "max_tokens");
+        // Nothing is invented when the endpoint sends none.
+        let plain = openai_reply("m", &json!({"choices": [{"message": {"content": "Done."}, "finish_reason": "stop"}]}));
+        assert_eq!(plain.text, vec![(false, "Done.".to_string())]);
     }
 }
