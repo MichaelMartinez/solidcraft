@@ -235,15 +235,19 @@ Grok Build also supports `XAI_API_KEY` for users who choose API authentication.
 - **Installed agent:** your own entry for an installed agent, for example with other arguments.
 - **Custom command:** any other program that speaks ACP on stdin and stdout, such as
   `my-agent --acp`. SolidCraft starts it directly, not through a shell.
-- **OpenAI-compatible API:** a preset (Ollama `http://localhost:11434/v1`, LM Studio
-  `http://localhost:1234/v1`, OpenAI, Mammouth AI `https://api.mammouth.ai/v1`, OpenCode Go `https://opencode.ai/zen/go/v1`) or a custom URL, the model name, and an optional key.
-  OpenCode Go models are routed to their endpoint by themselves (`/responses`,
-  `/messages` or Gemini for those families, `/chat/completions` for the rest),
-  each conversation request carrying the session header Go asks for, so one
-  preset covers every model.
+- **OpenAI-compatible API:** a preset (OC-Zen `https://opencode.ai/zen/v1`, a local Faenad
+  inference server, DeepSeek `https://api.deepseek.com/v1`) or a custom URL. A preset fills the
+  whole form: the model, the reasoning level, and a request timeout that suits the endpoint (a
+  cold local model can load for a minute before its first token). Every field stays editable
+  before you add the agent.
+  An OpenCode Go URL entered as a custom endpoint (`https://opencode.ai/zen/go/v1`) is still
+  routed per model family (`/responses`, `/messages` or Gemini for those families,
+  `/chat/completions` for the rest), each conversation request carrying the session header Go
+  asks for, so one endpoint covers every model.
   A model the list does not know is retried on the next protocol when Go names
   the mismatch.
-- **Anthropic-compatible API:** a preset (Anthropic) or a custom URL, for an endpoint that
+- **Anthropic-compatible API:** a preset (Anthropic, or DeepSeek's
+  `https://api.deepseek.com/anthropic`) or a custom URL, for an endpoint that
   speaks the Anthropic Messages API (`{base}/v1/messages`). This covers Anthropic itself and
   providers that offer an Anthropic-compatible endpoint, such as DeepSeek and Qwen.
 - The key goes into the system keychain (Keychain on macOS, Credential Manager on Windows, the
