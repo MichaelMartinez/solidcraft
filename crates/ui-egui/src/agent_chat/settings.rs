@@ -3,7 +3,7 @@
 //! and the panel. Plus the Add agent dialog: an installed ACP agent, a custom command, or an
 //! endpoint (OpenAI-compatible or Anthropic-compatible, whose key goes to the system keychain).
 
-use super::agents::{self, AgentConfig, Kind, Mode, Protocol};
+use super::agents::{self, AgentConfig, Kind, Mode, Protocol, Reasoning};
 use super::backend::TestError;
 use super::*;
 use crate::ui_kit;
@@ -744,7 +744,8 @@ fn agents_section(app: &mut SolveApp, ui: &mut egui::Ui) {
                             });
                         }
                     });
-                    if entry.kind == Kind::Api
+                    // Both endpoint kinds carry these two settings, so both show them.
+                    if entry.kind.is_api()
                         && let Some(c) = app.preferences.agents.iter_mut().find(|c| c.id == entry.id)
                     {
                         ui_kit::settings_form(ui, label_w, |ui| {

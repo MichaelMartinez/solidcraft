@@ -95,6 +95,8 @@ clicks and scrolling over the panel stay in the chat. The docked layout retains 
 - **Reasoning effort is not permissions.** The agent's thinking setting does not change
   SolidCraft's Ask / Edits / All approval policy. Reasoning options belong to the current session;
   changing them here does not rewrite OpenCode's configuration or another OpenCode session.
+  An API endpoint has no session to ask, so its level is set on the agent itself (see
+  [Add agent](#add-agent)).
 
 Messages use right-aligned user bubbles and plain assistant text. Consecutive tool calls share
 an activity group: click a row to inspect its output; failed calls have an error tint. Approval
@@ -285,7 +287,7 @@ Grok Build also supports `XAI_API_KEY` for users who choose API authentication.
   OpenAI-compatible endpoint for its models; an Anthropic-compatible one gets a short message,
   because not every such endpoint lists models (Qwen's has no model list). For these agents
   SolidCraft runs the conversation itself, with the same tools, limits and questions as for a
-  coding agent, and no cap on model requests per message (Stop ends it). **Request timeout** is how long one model request may
+  coding agent. **Request timeout** is how long one model request may
   take: 300 s by default, from 30 s to an hour. A slow local model (a large model on modest
   hardware, or a long message with many tool results) may need more; raise it here or in the
   endpoint's entry under **Agents**, where a change applies from the next request. A request that
@@ -303,6 +305,17 @@ the key field empty to keep it, or type a new one to replace it. A saved key sti
 HTTPS or this computer, so moving an endpoint with a key to a plain `http://` address elsewhere is
 refused. The running conversation takes a new request timeout at once; a new command, endpoint
 or model applies the next time the agent connects.
+
+  **Reasoning** asks the endpoint how much the model should think before it answers. *Provider
+  default* sends nothing, so the endpoint behaves as it did before this setting; *None*, *Low*,
+  *Medium* and *High* become `reasoning_effort` on an OpenAI-shaped endpoint, a thinking budget on
+  an Anthropic-shaped one, and a thinking budget through the Gemini shape of the OpenCode Go
+  preset. A thinking model keeps its chain of thought (and the signature bound to it) across the
+  rounds of one message, so it does not re-derive its plan on every tool call.
+
+  Two brakes end a message that is going nowhere, whether or not reasoning is set: a model that
+  keeps calling the same tool with the same result, and a model that keeps going round after round
+  without finishing. Both say so in place of the answer, and Stop still ends a message at once.
 
 For Ollama, choosing a model checks its reported capabilities in the background. If its
 capabilities list lacks `tools`, a warning below the model picker explains that the model can

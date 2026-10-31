@@ -818,6 +818,10 @@ impl AgentChat {
                     // Not a missing tool: the answer ran out of room, or the model declined (#9495).
                     "max_tokens" => self.notice(tr("ui.agent_chat_reply_cut_off").to_string(), false),
                     "refusal" => self.notice(tr("ui.agent_chat_reply_declined").to_string(), false),
+                    // The loop's own brakes: a model repeating itself, or one that keeps going
+                    // round after round. Both stop the turn instead of letting it run on.
+                    "loop" => self.notice(tr("ui.agent_chat_stopped_loop").to_string(), true),
+                    "rounds" => self.notice(tr("ui.agent_chat_stopped_rounds").to_string(), true),
                     _ => self.notice(format!("({reason})"), false),
                 }
                 return Some(Outcome::TurnEnd);
@@ -2300,7 +2304,7 @@ pub fn control(app: &mut SolveApp, ctx: &egui::Context, p: &Value) -> Result<Val
         app.preferences.ai_permissions = mode;
     }
     // Add an agent (as the Add agent dialog does), for tests and screenshots:
-    // {id?, name, kind, command | base_url + model + request_timeout_s?}.
+    // {id?, name, kind, command | base_url + model + request_timeout_s? + reasoning?}.
     if let Some(a) = p.get("add_agent") {
         let mut a = a.clone();
         // Seconds are rounded and clamped to 30 s ..= 1 h, not refused for being out of range.
