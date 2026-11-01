@@ -5,6 +5,9 @@ SolidCraft is a clean-room, pure-Rust parametric 3D CAD app (sketch solver, feat
 ## Start here
 Work: ROADMAP.md, "Where help is wanted most" in CONTRIBUTING.md, issues labelled `help wanted`, `good first issue`, `needs-triage`; architecture in `docs/architecture.md`. Local `plan/` notes are optional.
 
+## Personal branch (this checkout)
+Work on `personal`, never start or build `main`. Catch up with `git psync`; check upstream with `scripts/personal/sync.sh status`; rebuild with `scripts/personal/sync.sh known-good`. Workflow: `docs/personal-branch.md`.
+
 ## Hard rules (what enforces each)
 - Independent: never copy another product's code, icons, text or templates; never drive or take data from commercial CAD. `skills/solidcraft-ground-rules/SKILL.md`.
 - No GPL/LGPL/AGPL code, not even reading it (OpenCASCADE, FreeCAD, SolveSpace, CadQuery, LibreCAD, QCAD): `cargo xtask licences --check`.
