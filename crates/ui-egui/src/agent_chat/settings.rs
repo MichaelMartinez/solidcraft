@@ -2534,8 +2534,8 @@ mod card_tests {
 
         let local = agents::OPENAI_PRESETS.iter().position(|p| p.name == "Faenad local").expect("the local preset");
         choose_preset(&mut s, Protocol::OpenAi, local);
-        assert_eq!(s.model, "qwen3.8-27b-cad");
-        assert_eq!(s.reasoning_effort, "medium");
+        assert_eq!(s.model, "qwen3.8-27b-xhigh");
+        assert_eq!(s.reasoning_effort, "");
         assert!(s.request_timeout_s > agents::DEFAULT_REQUEST_TIMEOUT_S, "a local model needs room to load");
 
         // The custom URL is the entry after the presets: the form is cleared, not left on the

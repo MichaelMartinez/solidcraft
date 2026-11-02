@@ -353,8 +353,10 @@ pub const OPENAI_PRESETS: &[ApiPreset] = &[
     ApiPreset {
         name: "Faenad local",
         base_url: "http://100.93.124.43:8179/v1",
-        model: "qwen3.8-27b-cad",
-        reasoning_effort: "medium",
+        // The `-cad` variant is retired: it never reasons, invents parameters and repeats an
+        // identical failing call until its turn budget runs out (plan/studies/llm-bench).
+        model: "qwen3.8-27b-xhigh",
+        reasoning_effort: "",
         // A cold model loads before it answers; a minute of that is normal.
         request_timeout_s: 900,
     },
@@ -560,7 +562,7 @@ mod tests {
         }
         assert!(presets(Protocol::OpenAi).iter().any(|p| p.name == "OC-Zen" && p.model == "gpt-6-luna"));
         let local = presets(Protocol::OpenAi).iter().find(|p| p.name == "Faenad local").expect("the local inference preset");
-        assert_eq!(local.model, "qwen3.8-27b-cad");
+        assert_eq!(local.model, "qwen3.8-27b-xhigh");
         assert!(local.request_timeout_s >= 600, "a cold local model needs room to load");
         // The local server asks for no key, so plain HTTP over the tailnet is all it needs.
         assert_eq!(local.base_url, "http://100.93.124.43:8179/v1");
