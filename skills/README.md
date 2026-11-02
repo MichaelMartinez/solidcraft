@@ -27,6 +27,7 @@ The contributor skills (everything except modeling, editing, checking and mechan
 | [`solidcraft-checking`](solidcraft-checking/SKILL.md) | builds, changes or ports a design, next to the two above: parameter ranges, every allowed value, exact STEP comparison, regression tests, designs kept in git |
 | [`solidcraft-mechanisms`](solidcraft-mechanisms/SKILL.md) | builds, drives or animates an assembly: components, joints, motion links, closed loops such as actuators, contact sets, motion studies |
 | [`solidcraft-reporting`](solidcraft-reporting/SKILL.md) | hears that something went wrong (a crash, a failed command, a wrong shape or number, a hang): reproduces it in a fresh design, shrinks it to a minimal script and writes the bug report |
+| [`engineering-design-study`](engineering-design-study/SKILL.md) | runs and documents an engineering study: the question, source revision, evidence, retained failures, journal and visual review report |
 
 The modelling skills teach the agent to:
 - plan the part as numbers

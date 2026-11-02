@@ -48,3 +48,4 @@ Work on `personal`, never start or build `main`. Catch up with `git psync`; chec
 | A bug report, a crash, a wrong result | `skills/solidcraft-reporting/SKILL.md` |
 | Checking, porting, designs in git | `skills/solidcraft-checking/SKILL.md` |
 | Assemblies, joints, motion | `skills/solidcraft-mechanisms/SKILL.md` |
+| A measurement, experiment or design study | `skills/engineering-design-study/SKILL.md` |

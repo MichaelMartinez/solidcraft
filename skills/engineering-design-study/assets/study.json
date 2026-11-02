@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "title": "Engineering study",
+  "status": "in_progress",
+  "scope": "Record the authorized objective and excluded work here.",
+  "source_revision": "Record the source identity before edits.",
+  "review_gate": "Use only the review boundary specified by the user, or leave empty.",
+  "next_experiment": "State the first observable experiment before editing.",
+  "trace_limitations": ["No experiments recorded yet."],
+  "artifacts": [],
+  "experiments": [],
+  "checks": [],
+  "assumptions": [],
+  "blockers": []
+}
