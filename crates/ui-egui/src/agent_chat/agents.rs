@@ -581,6 +581,7 @@ mod tests {
         assert_eq!(OPENAI_PRESETS.first().map(|p| p.name), Some("Ollama"));
         assert_eq!(OPENAI_PRESETS.last().map(|p| p.name), Some("OpenRouter"));
         assert!(OPENAI_PRESETS.iter().any(|p| p.name == "OpenClaw"));
+        assert!(OPENAI_PRESETS.iter().any(|p| p.name == "Faenad local"));
         for preset in OPENAI_PRESETS.iter().chain(ANTHROPIC_PRESETS) {
             assert_eq!(normalize_url(preset.base_url).as_deref(), Ok(preset.base_url), "{}", preset.name);
             // The local inference server takes no key, so plain HTTP over the tailnet is all it needs.
