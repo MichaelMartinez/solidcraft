@@ -352,7 +352,7 @@ pub fn open_edit(app: &mut SolveApp, id: &str) -> bool {
 }
 
 /// Take `index` from the protocol's presets, or leave an empty form for a custom endpoint. A
-/// preset fills the whole form (model, thinking depth, timeout); every field stays editable.
+/// preset fills the whole form (model, reasoning effort, timeout); every field stays editable.
 pub(super) fn choose_preset(s: &mut AddState, protocol: Protocol, index: usize) {
     s.protocol = protocol;
     s.preset = index;
@@ -361,7 +361,7 @@ pub(super) fn choose_preset(s: &mut AddState, protocol: Protocol, index: usize) 
             s.base_url = preset.base_url.to_string();
             s.name = preset.name.to_string();
             s.model = preset.model.to_string();
-            s.reasoning = preset.reasoning;
+            s.reasoning_effort = preset.reasoning_effort.to_string();
             s.request_timeout_s = preset.request_timeout_s;
         }
         None => {
@@ -1350,9 +1350,9 @@ mod card_tests {
         keys.set("api-1", "test-key-1").unwrap();
         h.app.preferences.agents.push(AgentConfig {
             id: "api-1".into(),
-            name: "OpenAI".into(),
+            name: "OC-Zen".into(),
             kind: Kind::Api,
-            base_url: "https://api.openai.com/v1".into(),
+            base_url: "https://opencode.ai/zen/v1".into(),
             model: "model-a".into(),
             key: true,
             request_timeout_s: 600,
@@ -1365,8 +1365,8 @@ mod card_tests {
             assert!(s.key.is_empty(), "the stored key is never read back into the dialog");
             assert!(s.saved_key);
             assert_eq!((s.kind, s.protocol), (AddKind::Api, Protocol::OpenAi));
-            assert_eq!(agents::presets(Protocol::OpenAi).get(s.preset).map(|p| p.name), Some("OpenAI"));
-            assert_eq!((s.base_url.as_str(), s.model.as_str(), s.request_timeout_s), ("https://api.openai.com/v1", "model-a", 600));
+            assert_eq!(agents::presets(Protocol::OpenAi).get(s.preset).map(|p| p.name), Some("OC-Zen"));
+            assert_eq!((s.base_url.as_str(), s.model.as_str(), s.request_timeout_s), ("https://opencode.ai/zen/v1", "model-a", 600));
             assert_eq!(s.reasoning_effort, "high", "the chosen effort comes back into the dialog");
         }
         h.app.agent_chat.settings.add.as_mut().unwrap().model = "model-b".into();
@@ -1379,7 +1379,7 @@ mod card_tests {
         assert!(open_edit(&mut h.app, "api-1"));
         h.app.agent_chat.settings.add.as_mut().unwrap().base_url = "http://example.com/v1".into();
         assert_eq!(add_agent(&mut h.app), Err(tr("ui.ai_key_needs_https").to_string()));
-        assert_eq!(h.app.preferences.agents[0].base_url, "https://api.openai.com/v1");
+        assert_eq!(h.app.preferences.agents[0].base_url, "https://opencode.ai/zen/v1");
         // A new key replaces the stored one.
         assert!(open_edit(&mut h.app, "api-1"));
         h.app.agent_chat.settings.add.as_mut().unwrap().key = "test-key-2".into();
@@ -1501,7 +1501,7 @@ mod card_tests {
         assert!(!note(&h).is_empty(), "an empty list is said so too");
         ask(&mut h, "http://localhost:18789/empty/v1");
         assert_eq!(requests(), 5, "an empty list is asked for again");
-        ask(&mut h, "http://localhost:11434/v1");
+        ask(&mut h, "https://opencode.ai/zen/v1");
         assert_eq!(requests(), 5, "a list that had models is kept");
         assert_eq!(note(&h), "");
     }
@@ -1565,15 +1565,15 @@ mod card_tests {
         assert!(requests().is_empty(), "no endpoint chosen yet");
         h.step(&json!({"click":{"handle":"ai_add:ui.ai_add_endpoint"}})).unwrap();
         list_settled(&mut h);
-        assert_eq!(requests(), [("http://localhost:11434/v1/models".to_string(), false)]);
+        assert_eq!(requests(), [("https://opencode.ai/zen/v1/models".to_string(), false)]);
         h.frames(5);
         assert_eq!(requests().len(), 1, "once");
 
         h.step(&json!({"click":{"handle":"ai_add:preset"}})).unwrap();
         h.frames(3);
-        h.step(&json!({"click":{"handle":"ai_add:preset:OpenRouter"}})).unwrap();
+        h.step(&json!({"click":{"handle":"ai_add:preset:DeepSeek"}})).unwrap();
         list_settled(&mut h);
-        assert_eq!(requests().last().cloned(), Some(("https://openrouter.ai/api/v1/models".to_string(), false)));
+        assert_eq!(requests().last().cloned(), Some(("https://api.deepseek.com/v1/models".to_string(), false)));
 
         // Typed in: no request until the field is left, which here the flag stands for.
         let add = h.app.agent_chat.settings.add.as_mut().unwrap();

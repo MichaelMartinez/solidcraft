@@ -452,13 +452,15 @@ mod tests {
 
     /// The first preset is the one an Add dialog opens with, and the one taken for Ollama.
     #[test]
-    fn ollama_stays_the_first_preset_and_every_preset_can_take_a_key() {
-        assert_eq!(OPENAI_PRESETS.first().map(|p| p.name), Some("Ollama"));
-        assert_eq!(OPENAI_PRESETS.last().map(|p| p.name), Some("OpenRouter"));
-        assert!(OPENAI_PRESETS.iter().any(|p| p.name == "OpenClaw"));
+    fn every_preset_is_a_usable_endpoint_and_the_local_one_takes_no_key() {
+        assert_eq!(OPENAI_PRESETS.first().map(|p| p.name), Some("OC-Zen"));
+        assert_eq!(OPENAI_PRESETS.last().map(|p| p.name), Some("DeepSeek"));
+        assert!(OPENAI_PRESETS.iter().any(|p| p.name == "Faenad local"));
         for preset in OPENAI_PRESETS.iter().chain(ANTHROPIC_PRESETS) {
             assert_eq!(normalize_url(preset.base_url).as_deref(), Ok(preset.base_url), "{}", preset.name);
-            assert!(key_safe_for(preset.base_url), "{}", preset.name);
+            // The tailnet endpoint needs no key, so one is refused there; every other preset is
+            // HTTPS and takes one.
+            assert_eq!(key_safe_for(preset.base_url), preset.base_url.starts_with("https://"), "{}", preset.name);
         }
     }
 
