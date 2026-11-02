@@ -1,0 +1,4 @@
+interface:
+  display_name: "Engineering Design Study"
+  short_description: "Preserve experiments, evidence and review journals"
+  default_prompt: "Use $engineering-design-study to conduct this study and retain its evidence, journal and review report."
