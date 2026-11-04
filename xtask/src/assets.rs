@@ -61,6 +61,58 @@ fn walk(dir: &Path, root: &Path, out: &mut Vec<String>) -> Result<(), String> {
     Ok(())
 }
 
+/// The paths git's ignore rules cover. They are not part of the repository, so a local
+/// scratch directory (`screenshots/`, a side checkout named in `.git/info/exclude`) cannot
+/// fail the gate on files that never ship. `None` when git is unavailable or this is not a
+/// checkout: the walker's own skips are then all there is.
+fn git_ignored(root: &Path, files: &[String]) -> Result<Option<BTreeSet<String>>, String> {
+    use std::io::Write as _;
+    use std::process::Stdio;
+    let spawned = std::process::Command::new("git")
+        .current_dir(root)
+        .args(["check-ignore", "--stdin", "-z"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn();
+    let Ok(mut child) = spawned else { return Ok(None) };
+    let mut input = Vec::with_capacity(files.iter().map(|file| file.len() + 1).sum());
+    for file in files {
+        input.extend_from_slice(file.as_bytes());
+        input.push(0);
+    }
+    // Feed stdin from a thread: git answers while it still reads, and with many ignored
+    // names a synchronous write would deadlock against a full stdout pipe. Joining after
+    // wait_with_output is safe, because git's exit closes the pipe.
+    let writer = child.stdin.take().map(|mut stdin| {
+        std::thread::spawn(move || {
+            // A path git rejects closes the pipe under us.
+            let _ = stdin.write_all(&input);
+        })
+    });
+    let out = child.wait_with_output().map_err(|e| format!("git check-ignore: {e}"))?;
+    if let Some(writer) = writer {
+        let _ = writer.join();
+    }
+    match out.status.code() {
+        Some(0) => Ok(Some(String::from_utf8_lossy(&out.stdout).split('\0').filter(|path| !path.is_empty()).map(str::to_owned).collect())),
+        // 1: nothing is ignored. Any other code (not a checkout) is no answer.
+        Some(1) => Ok(Some(BTreeSet::new())),
+        _ => Ok(None),
+    }
+}
+
+/// Every file the gate considers, in a stable order: the walk minus what git ignores.
+fn attributable(root: &Path) -> Result<Vec<String>, String> {
+    let mut files = Vec::new();
+    walk(root, root, &mut files)?;
+    files.sort();
+    if let Some(ignored) = git_ignored(root, &files)? {
+        files.retain(|file| !ignored.contains(file));
+    }
+    Ok(files)
+}
+
 fn needs_attribution(path: &str) -> bool {
     // Include code masters, native work, catalogs, metadata and licence texts in the collection.
     if path.starts_with("assets/locales/pending/") {
@@ -85,9 +137,7 @@ pub fn run(root: &Path) -> Result<(), String> {
         attribution.push('\n');
         attribution.push_str(&row);
     }
-    let mut files = Vec::new();
-    walk(root, root, &mut files)?;
-    files.sort();
+    let files = attributable(root)?;
     let missing = missing(&files, &attribution);
     if !missing.is_empty() {
         return Err(format!("assets missing attribution rows:\n{}", missing.iter().map(|path| format!("  {path}")).collect::<Vec<_>>().join("\n")));
@@ -112,6 +162,28 @@ mod tests {
         assert!(needs_attribution("design/project.vectorcraft"));
         assert!(!needs_attribution("assets/README.md"));
         assert!(!needs_attribution("crates/ui/src/widget.rs"));
+    }
+
+    /// A scratch file git ignores never ships, so it must not be collected or need a row.
+    #[test]
+    fn ignored_files_are_not_collected() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static N: AtomicUsize = AtomicUsize::new(0);
+        let root = std::env::temp_dir().join(format!("xtask-assets-{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("scratch")).unwrap();
+        std::fs::write(root.join(".gitignore"), "scratch/\n").unwrap();
+        std::fs::write(root.join("scratch").join("left-over.png"), b"").unwrap();
+        std::fs::write(root.join("kept.png"), b"").unwrap();
+        let init = std::process::Command::new("git").args(["init", "--quiet"]).arg(&root).output();
+        if !init.is_ok_and(|out| out.status.success()) {
+            // No git here: nothing to compare against, and the walker still runs.
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+        let files = attributable(&root).unwrap();
+        assert_eq!(files, ["kept.png"]);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

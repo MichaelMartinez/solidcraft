@@ -98,6 +98,10 @@ the repository. This includes native work, Rust masters, catalogs, shaders and
 platform templates. Packaging selects explicit current files and fails when
 required inputs are absent. Archived artwork has no production consumers.
 
+Files git ignores are not collected: scratch screenshots, a local checkout of a
+related repository and anything else named in `.gitignore` or
+`.git/info/exclude` never ships, so it needs no row.
+
 Dependency-owned egui fonts and vendored renderer shaders stay with their
 libraries; their licences remain in `THIRD-PARTY-LICENSES.txt` and `ATTRIBUTION.md`.
 System fonts, optional packs, user fonts/canvases/decals/materials and native OS
