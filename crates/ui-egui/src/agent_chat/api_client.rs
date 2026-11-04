@@ -3278,32 +3278,6 @@ mod tests {
         }
     }
 
-    /// Run one prompt against a scripted endpoint and return the request bodies it received.
-    fn sent_bodies(cfg: ApiConfig, answer: Value) -> Vec<Value> {
-        let seen = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
-        let log = seen.clone();
-        let answer = answer.to_string().into_bytes();
-        let cfg = ApiConfig {
-            http: Arc::new(move |r: &HttpRequest| {
-                if r.method == "GET" {
-                    return Ok((200, b"{\"data\":[]}".to_vec()));
-                }
-                if let Some(body) = &r.body
-                    && let Ok(v) = serde_json::from_slice(body)
-                {
-                    log.lock().unwrap().push(v);
-                }
-                Ok((200, answer.clone()))
-            }),
-            ..cfg
-        };
-        let mut b = ApiBackend::start(cfg, go_ctx()).unwrap();
-        b.prompt(&[PromptPart::Text("hi".into())]);
-        let _ = wait_for_turn(&mut b);
-        b.shutdown(true);
-        seen.lock().unwrap().clone()
-    }
-
     /// A model that calls the same tool with the same arguments, and gets the same result, is
     /// going in circles: the turn stops instead of running until the user presses Stop.
     #[test]
