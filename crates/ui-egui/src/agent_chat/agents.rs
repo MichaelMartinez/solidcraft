@@ -312,37 +312,8 @@ pub struct ApiPreset {
     pub request_timeout_s: u64,
 }
 
-/// An endpoint this build is set up for, with everything the dialog needs to start from it:
-/// choosing a preset fills the form, and every field stays editable before the agent is added.
-pub struct ApiPreset {
-    pub name: &'static str,
-    pub base_url: &'static str,
-    /// The model to start on; empty when the endpoint has to be asked for its list.
-    pub model: &'static str,
-    /// The `reasoning_effort` to start on; empty leaves the endpoint's own default.
-    pub reasoning_effort: &'static str,
-    /// Seconds one request may take: a local model may have to load before its first token.
-    pub request_timeout_s: u64,
-}
-
-/// A preset that fills only the name and URL: the model is listed when the endpoint is asked for
-/// its models, and the endpoint's own reasoning and timeout apply.
-const fn url_only(name: &'static str, base_url: &'static str) -> ApiPreset {
-    ApiPreset { name, base_url, model: "", reasoning_effort: "", request_timeout_s: DEFAULT_REQUEST_TIMEOUT_S }
-}
-
-/// OpenAI-compatible endpoints people use.
+/// OpenAI-compatible endpoints this build is set up for.
 pub const OPENAI_PRESETS: &[ApiPreset] = &[
-    url_only("Ollama", "http://localhost:11434/v1"),
-    url_only("LM Studio", "http://localhost:1234/v1"),
-    url_only("OpenClaw", "http://localhost:18789/v1"),
-    url_only("OpenAI", "https://api.openai.com/v1"),
-    url_only("Mistral AI", "https://api.mistral.ai/v1"),
-    url_only("Mammouth AI", "https://api.mammouth.ai/v1"),
-    url_only("OpenCode Go", "https://opencode.ai/zen/go/v1"),
-    url_only("DeepSeek", "https://api.deepseek.com"),
-    url_only("Qwen", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"),
-    url_only("Cheaper Inference", "https://api.cheaperinference.com/v1"),
     ApiPreset {
         name: "OC-Zen",
         base_url: "https://opencode.ai/zen/v1",
@@ -360,13 +331,25 @@ pub const OPENAI_PRESETS: &[ApiPreset] = &[
         // A cold model loads before it answers; a minute of that is normal.
         request_timeout_s: 900,
     },
-    url_only("OpenRouter", "https://openrouter.ai/api/v1"),
+    ApiPreset {
+        name: "DeepSeek",
+        base_url: "https://api.deepseek.com/v1",
+        model: "deepseek-chat",
+        reasoning_effort: "",
+        request_timeout_s: DEFAULT_REQUEST_TIMEOUT_S,
+    },
 ];
 
-/// Anthropic-compatible endpoints people use. The base URL is the one their documentation calls
-/// `ANTHROPIC_BASE_URL`: the `/v1` is added where needed.
+/// Anthropic-compatible endpoints this build is set up for. The base URL is the one their
+/// documentation calls `ANTHROPIC_BASE_URL`: the `/v1` is added where needed.
 pub const ANTHROPIC_PRESETS: &[ApiPreset] = &[
-    url_only("Anthropic", "https://api.anthropic.com/v1"),
+    ApiPreset {
+        name: "Anthropic",
+        base_url: "https://api.anthropic.com/v1",
+        model: "",
+        reasoning_effort: "",
+        request_timeout_s: DEFAULT_REQUEST_TIMEOUT_S,
+    },
     ApiPreset {
         name: "DeepSeek",
         base_url: "https://api.deepseek.com/anthropic",
@@ -374,7 +357,6 @@ pub const ANTHROPIC_PRESETS: &[ApiPreset] = &[
         reasoning_effort: "",
         request_timeout_s: DEFAULT_REQUEST_TIMEOUT_S,
     },
-    url_only("Qwen", "https://dashscope-intl.aliyuncs.com/apps/anthropic"),
 ];
 
 /// The presets offered for an endpoint protocol.
@@ -551,10 +533,6 @@ mod tests {
         assert_eq!(Protocol::Anthropic.kind(), Kind::Anthropic);
         assert_eq!(Kind::Api.id(), "api");
         assert_eq!(Kind::Anthropic.id(), "anthropic");
-        assert!(presets(Protocol::OpenAi).iter().all(|p| !p.name.is_empty() && p.base_url.starts_with("http")));
-        assert!(presets(Protocol::OpenAi).iter().any(|p| p.name == "Mammouth AI" && key_safe_for(p.base_url)));
-        assert!(presets(Protocol::OpenAi).iter().any(|p| p.name == "Mistral AI" && p.base_url == "https://api.mistral.ai/v1"));
-        assert!(presets(Protocol::OpenAi).iter().any(|p| p.name == "Cheaper Inference" && key_safe_for(p.base_url)));
         // Every preset is usable as it stands: a URL, and a timeout in the range the field takes.
         for p in presets(Protocol::OpenAi).iter().chain(presets(Protocol::Anthropic)) {
             assert!(!p.name.is_empty() && p.base_url.starts_with("http"), "{}", p.name);
@@ -569,25 +547,24 @@ mod tests {
         assert!(!key_safe_for(local.base_url), "a key would be refused there, and none is stored");
         assert!(presets(Protocol::Anthropic).iter().any(|p| p.base_url == "https://api.deepseek.com/anthropic"));
         assert!(presets(Protocol::Anthropic).iter().any(|p| p.base_url == "https://api.anthropic.com/v1"));
-        for name in ["DeepSeek", "Qwen"] {
-            assert!(presets(Protocol::OpenAi).iter().any(|p| p.name == name), "OpenAI-compatible preset for {name}");
-            assert!(presets(Protocol::Anthropic).iter().any(|p| p.name == name), "Anthropic-compatible preset for {name}");
+        // DeepSeek has a preset for both protocols; Qwen works as a custom URL.
+        for protocol in [Protocol::OpenAi, Protocol::Anthropic] {
+            assert!(presets(protocol).iter().any(|p| p.name == "DeepSeek"), "DeepSeek preset for {protocol:?}");
         }
         assert!(presets(Protocol::Anthropic).iter().any(|p| p.base_url == "https://api.deepseek.com/anthropic"));
-        assert!(presets(Protocol::Anthropic).iter().any(|p| p.base_url == "https://dashscope-intl.aliyuncs.com/apps/anthropic"));
     }
 
-    /// The first preset is the one an Add dialog opens with, and the one taken for Ollama.
+    /// The first preset is the one an Add dialog opens with.
     #[test]
-    fn ollama_stays_the_first_preset_and_every_preset_can_take_a_key() {
-        assert_eq!(OPENAI_PRESETS.first().map(|p| p.name), Some("Ollama"));
-        assert_eq!(OPENAI_PRESETS.last().map(|p| p.name), Some("OpenRouter"));
-        assert!(OPENAI_PRESETS.iter().any(|p| p.name == "OpenClaw"));
+    fn every_preset_is_a_usable_endpoint_and_the_local_one_takes_no_key() {
+        assert_eq!(OPENAI_PRESETS.first().map(|p| p.name), Some("OC-Zen"));
+        assert_eq!(OPENAI_PRESETS.last().map(|p| p.name), Some("DeepSeek"));
         assert!(OPENAI_PRESETS.iter().any(|p| p.name == "Faenad local"));
         for preset in OPENAI_PRESETS.iter().chain(ANTHROPIC_PRESETS) {
             assert_eq!(normalize_url(preset.base_url).as_deref(), Ok(preset.base_url), "{}", preset.name);
-            // The local inference server takes no key, so plain HTTP over the tailnet is all it needs.
-            assert!(key_safe_for(preset.base_url) || preset.name == "Faenad local", "{}", preset.name);
+            // The tailnet endpoint needs no key, so one is refused there; every other preset is
+            // HTTPS and takes one.
+            assert_eq!(key_safe_for(preset.base_url), preset.base_url.starts_with("https://"), "{}", preset.name);
         }
     }
 

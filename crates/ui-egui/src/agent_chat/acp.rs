@@ -782,7 +782,7 @@ mod tests {
     #[test]
     fn the_session_gets_the_bridged_mcp_server_without_a_token_or_any_path() {
         let b = McpBridge { cli: "/opt/solidcraft/solidcraft-cli".into(), port: 41234 };
-        let p = session_new_params(std::path::Path::new("/home/u/designs"), Some(&b), &json!({}), system_note(""));
+        let p = session_new_params(std::path::Path::new("/home/u/designs"), Some(&b), &json!({}), &system_note(""));
         let s = &p["mcpServers"][0];
         assert_eq!(s["name"], BRIDGE_NAME);
         assert_eq!(s["args"], json!(["mcp", "--connect", "127.0.0.1:41234"]));

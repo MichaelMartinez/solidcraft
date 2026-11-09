@@ -3332,6 +3332,7 @@ mod tests {
             base_url: base_url.into(),
             model: model.into(),
             key: None,
+            allow_insecure_http: false,
             http,
             request_timeout_s: 300,
             reasoning_effort: String::new(),
